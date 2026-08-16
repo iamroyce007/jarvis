@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.jarvis.voice</string>
+  <key>CFBundleName</key>
+  <string>JARVIS Voice</string>
+  <key>CFBundleExecutable</key>
+  <string>jarvis-voice</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <!-- Background helper: no Dock icon, no menu bar. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>JARVIS listens to your voice commands.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>JARVIS uses on-device speech recognition to understand what you say.</string>
+</dict>
+</plist>

@@ -1,0 +1,30 @@
+{
+  "name": "jarvis",
+  "version": "0.1.0",
+  "description": "A desktop shell around a persistent Claude Code agent.",
+  "main": "out/main/index.js",
+  "author": "anirudh",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "native": "bash native/build.sh",
+    "dev": "npm run native && electron-vite dev",
+    "build": "npm run native && electron-vite build",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "package": "bash scripts/package.sh",
+    "autostart": "bash scripts/autostart.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^43.4.0",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}
