@@ -30,6 +30,7 @@ declare global {
       openVoiceSettings(pane: 'SpeechRecognition' | 'Microphone' | 'Dictation'): Promise<void>
       newSession(): Promise<SessionInfo>
       setPersonality(p: string): Promise<SessionInfo>
+      exportUsage(): Promise<string>
       getHistory(limit?: number): Promise<HistoryTurn[]>
       searchHistory(q: string, limit?: number): Promise<HistoryTurn[]>
       clearHistory(): Promise<void>

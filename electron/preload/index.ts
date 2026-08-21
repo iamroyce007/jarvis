@@ -21,6 +21,8 @@ const api = {
   setPersonality: (p: string): Promise<SessionInfo> =>
     ipcRenderer.invoke('claude:set-personality', p),
 
+  exportUsage: (): Promise<string> => ipcRenderer.invoke('usage:export'),
+
   getHistory: (limit?: number): Promise<Turn[]> => ipcRenderer.invoke('history:recent', limit),
   searchHistory: (q: string, limit?: number): Promise<Turn[]> =>
     ipcRenderer.invoke('history:search', q, limit),

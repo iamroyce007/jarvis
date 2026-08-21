@@ -11,8 +11,8 @@ import {
 } from 'electron'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { homedir } from 'node:os'
-import { existsSync, readdirSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
@@ -24,6 +24,13 @@ import { buildSystemPrompt, type Personality } from './persona.js'
 import { DENYLIST } from './permissions.js'
 import { log, LOG_PATH } from './log.js'
 import {
+  checkCapabilities,
+  requestCapabilities,
+  explainMissing,
+  openCapabilityPane,
+  type Capabilities
+} from './capabilities.js'
+import {
   recordError,
   recentErrors,
   clearErrors,
@@ -31,6 +38,7 @@ import {
   exportErrors,
   type ErrorSource
 } from './store/errors.js'
+import { recordUsage, lifetimeUsage, usageSince, exportUsage } from './store/usage.js'
 import {
   recordTurn,
   recentTurns,
@@ -82,6 +90,16 @@ let subscription: string | null = null
 /** Set once macOS has granted speech recognition, gating the listen watchdog. */
 let speechAuthorized = false
 let lastListenAttempt = 0
+let capabilities: Capabilities | null = null
+
+/**
+ * Cache-read ceiling before the session is recycled.
+ *
+ * Every turn re-reads the whole conversation, so cost grows with session length
+ * rather than with what is said. Around 400k the context is mostly stale detail
+ * from earlier turns and old screenshots.
+ */
+const CONTEXT_RESET_TOKENS = 400_000
 
 function send(channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
@@ -96,7 +114,10 @@ function sessionInfo(): SessionInfo {
     authMethod: authStatus,
     subscription,
     lastLatencyMs: claude.lastLatencyMs,
-    turns: claude.turns
+    turns: claude.turns,
+    lastUsage: claude.lastUsage,
+    totalUsage: claude.totalUsage,
+    lifetimeUsage: lifetimeUsage()
   }
 }
 
@@ -258,6 +279,44 @@ function wireEvents(): void {
     )
   )
   claude.on('result', (r) => {
+    recordUsage(r.usage, { session: claude.sessionId, latencyMs: r.latencyMs })
+
+    const u = r.usage
+    const billed = u.input + u.cacheWrite + u.cacheRead
+    const hit = billed ? Math.round((u.cacheRead / billed) * 100) : 0
+    const s = claude.totalUsage
+    // Claude Pro's limit resets on a rolling five-hour window, so that total is
+    // the one that predicts being throttled.
+    const win = usageSince(5 * 60 * 60 * 1000)
+    const life = lifetimeUsage()
+
+    log(
+      `TOKENS turn#${r.turns} in=${u.input} out=${u.output} ` +
+        `cacheR=${u.cacheRead} cacheW=${u.cacheWrite} hit=${hit}% ${r.latencyMs}ms`
+    )
+    log(
+      `TOKENS session in=${s.input} out=${s.output} cacheR=${s.cacheRead} | ` +
+        `5h-window ${win.input + win.cacheRead + win.output} over ${win.turns} turns | ` +
+        `lifetime ${life.input + life.cacheRead + life.output} over ${life.turns} turns`
+    )
+    send('session', sessionInfo())
+
+    // Cache reads scale with the conversation, so a long session costs more per
+    // turn regardless of what is said. Past a threshold the context is worth
+    // more than it costs; a fresh session resets it. Claude Code keeps its own
+    // transcript, and JARVIS keeps history in SQLite, so little is truly lost.
+    if (u.cacheRead > CONTEXT_RESET_TOKENS && !claude.isBusy) {
+      log(`context reset: cacheRead=${u.cacheRead} exceeded ${CONTEXT_RESET_TOKENS}`)
+      void claude
+        .newSession()
+        .then(() => {
+          log('started a fresh session to shed context')
+          send('session', sessionInfo())
+        })
+        .catch((e: unknown) => log('context reset failed:', String(e)))
+    }
+  })
+  claude.on('result', (r) => {
     // Empty-text errors are barge-in cancellations, not faults worth recording.
     if (r.isError && r.text.trim()) {
       recordError('claude', r.text, {
@@ -401,10 +460,121 @@ function recognitionHints(): string[] {
   return [...verbs, ...apps].slice(0, 100)
 }
 
+/**
+ * Requests that refer to something on screen rather than naming it.
+ * These are exactly the cases where asking "what am I looking at?" is useless.
+ */
+const VISUAL_REQUEST = new RegExp(
+  [
+    // Explicitly about the screen.
+    "\\b(screen|screenshot|display|window|showing|on\\s+screen)\\b",
+    // Asking JARVIS to look.
+    "\\b(look\\s+at|take\\s+a\\s+look|can\\s+you\\s+see|do\\s+you\\s+see|read\\s+(this|that|it))\\b",
+    // Deictic questions that are meaningless without sight.
+    "\\bwhat(\\s+is|'?s)?\\s+(this|that|it|going\\s+on|wrong|happening)\\b",
+    "\\b(fix|explain|check|debug)\\s+(this|that|it)\\b",
+    // Pointing at UI to act on.
+    "\\b(click|press|tap|select)\\s+(this|that|it|the|on)\\b",
+    "\\b(this|that)\\s+(error|button|window|tab|field|box|menu|dialog)\\b"
+  ].join("|"),
+  "i"
+)
+
+/**
+ * Captures the screen up front for visual requests.
+ *
+ * Leaving the decision to Claude does not work reliably at low effort — it
+ * takes the cheaper path and asks the user what they mean instead of looking.
+ * Capturing here makes sight unconditional: the image is already on disk and
+ * named in the prompt before Claude starts reasoning.
+ */
+async function captureScreen(): Promise<string | null> {
+  if (!capabilities?.screenRecording) return null
+  const out = join(tmpdir(), 'jarvis-screen.png')
+  try {
+    // -x silent, -o no shadow, -C include cursor for "click that" requests.
+    await execFileAsync('screencapture', ['-x', '-o', '-C', out], { timeout: 8_000 })
+    let { size } = statSync(out)
+    if (size < 1024) return null
+
+    // A retina capture is ~5120px wide and costs a great many image tokens,
+    // which then sit in the conversation for every subsequent turn. 1600px is
+    // still legible for UI text while being dramatically cheaper.
+    try {
+      await execFileAsync('sips', ['-Z', '1600', out], { timeout: 8_000 })
+      size = statSync(out).size
+    } catch {
+      /* resizing is an optimisation, not a requirement */
+    }
+    log('captured screen:', out, size, 'bytes')
+    return out
+  } catch (err) {
+    log('screen capture failed:', err instanceof Error ? err.message : String(err))
+    return null
+  }
+}
+
+/** Frontmost app and window, so "fix this" has something to refer to. */
+async function screenContext(utterance: string): Promise<string | null> {
+  try {
+    const script = `
+      tell application "System Events"
+        set procName to name of first process whose frontmost is true
+        try
+          set winName to name of front window of (first process whose frontmost is true)
+        on error
+          set winName to ""
+        end try
+      end tell
+      return procName & "|" & winName`
+    const { stdout } = await execFileAsync('osascript', ['-e', script], { timeout: 4_000 })
+    const [appName, windowName] = stdout.trim().split('|')
+    if (!appName) return null
+    const lines = [`[Context] Frontmost app: ${appName}`]
+    if (windowName) lines.push(`[Context] Window: ${windowName}`)
+
+    if (VISUAL_REQUEST.test(utterance)) {
+      const shot = await captureScreen()
+      if (shot) {
+        lines.push(
+          `[Context] A screenshot of the current screen was just saved to ${shot}.`,
+          '[Context] READ THAT IMAGE FILE NOW before answering. It shows exactly what the user',
+          '[Context] is looking at, so never ask them to describe their screen.'
+        )
+      } else if (!capabilities?.screenRecording) {
+        lines.push(
+          '[Context] Screen Recording permission is off, so you cannot see the screen.',
+          '[Context] Say so plainly and name the setting: Privacy & Security › Screen Recording.'
+        )
+      }
+    }
+    return lines.join('\n')
+  } catch {
+    return null
+  }
+}
+
 function registerIpc(): void {
   ipcMain.handle('voice:open-settings', (_e, pane: 'SpeechRecognition' | 'Microphone' | 'Dictation') =>
     openPrivacySettings(pane)
   )
+  ipcMain.handle('usage:export', async () => {
+    const { writeFile } = await import('node:fs/promises')
+    const out = join(homedir(), 'Desktop', `jarvis-tokens-${Date.now()}.csv`)
+    await writeFile(out, exportUsage(), 'utf8')
+    void shell.showItemInFolder(out)
+    return out
+  })
+
+  ipcMain.handle('caps:get', async () => capabilities ?? (await checkCapabilities()))
+  ipcMain.handle('caps:request', async () => {
+    capabilities = await requestCapabilities()
+    return capabilities
+  })
+  ipcMain.handle('caps:open', (_e, which: 'screen' | 'accessibility' | 'automation') =>
+    openCapabilityPane(which)
+  )
+
   ipcMain.handle('history:recent', (_e, limit?: number) => recentTurns(limit ?? 200))
   ipcMain.handle('history:search', (_e, q: string, limit?: number) => searchTurns(q, limit ?? 50))
   ipcMain.handle('history:clear', () => clearTurns())
@@ -477,6 +647,23 @@ app.whenReady().then(async () => {
   await detectAuth()
   log('claude running:', claude.isRunning, 'connected:', claude.connected, 'auth:', authStatus)
   send('session', sessionInfo())
+
+  // Sight and control. Claude Code inherits these grants as a child process.
+  orchestrator.setContextProvider(screenContext)
+  capabilities = await requestCapabilities()
+  send('capabilities', capabilities)
+  if (!capabilities.screenRecording || !capabilities.accessibility) {
+    void explainMissing(capabilities)
+  }
+  // Screen Recording only takes effect after a relaunch, so re-check as we run.
+  setInterval(async () => {
+    const next = await checkCapabilities()
+    if (JSON.stringify(next) !== JSON.stringify(capabilities)) {
+      capabilities = next
+      log('capabilities changed:', JSON.stringify(next))
+      send('capabilities', next)
+    }
+  }, 20_000)
 
   // JARVIS is meant to be listening whenever it is running. If the helper dies
   // or recognition stalls, bring it back without the user having to notice.

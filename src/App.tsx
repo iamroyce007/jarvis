@@ -54,6 +54,8 @@ export default function App() {
   }, [])
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** Guards the one-time jump to the newest turn when history first renders. */
+  const hasScrolledToLatest = useRef(false)
 
   useEffect(() => {
     const api = window.jarvis
@@ -109,9 +111,22 @@ export default function App() {
 
   // Follow the conversation only while the user is already at the bottom;
   // yanking them back down mid-scroll makes the panel impossible to read.
+  // The first paint is the exception: restored history must open at the newest
+  // message, and a freshly loaded panel sits at the top, which the proximity
+  // check would otherwise read as "scrolled away" and leave there.
   useEffect(() => {
     const el = scrollRef.current
-    if (!el) return
+    if (!el || turns.length === 0) return
+
+    if (!hasScrolledToLatest.current) {
+      hasScrolledToLatest.current = true
+      // After layout, so scrollHeight reflects the rendered turns.
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight
+      })
+      return
+    }
+
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     if (distanceFromBottom < 120) el.scrollTop = el.scrollHeight
   }, [turns])
@@ -146,6 +161,35 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Token counts run to millions over a session, so they are abbreviated.
+  const compact = (n: number): string =>
+    n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n)
+
+  const turnTokens = session?.lastUsage
+    ? `${compact(session.lastUsage.input + session.lastUsage.cacheRead)} in · ${compact(session.lastUsage.output)} out`
+    : '—'
+
+  const sessionTokens = session?.totalUsage
+    ? `${compact(session.totalUsage.input + session.totalUsage.cacheRead)} in · ${compact(session.totalUsage.output)} out`
+    : '—'
+
+  // Cached reads are the cheap path; a high ratio is why long sessions stay viable.
+  const cacheRatio = (() => {
+    const u = session?.totalUsage
+    if (!u) return '—'
+    const billed = u.input + u.cacheWrite + u.cacheRead
+    if (!billed) return '—'
+    return `${Math.round((u.cacheRead / billed) * 100)}%`
+  })()
+
+  const lifetimeTokens = session?.lifetimeUsage
+    ? `${compact(
+        session.lifetimeUsage.input +
+          session.lifetimeUsage.cacheRead +
+          session.lifetimeUsage.output
+      )} · ${session.lifetimeUsage.turns} turns`
+    : '—'
+
   const connected = session?.connected ?? false
   const busy = state === 'THINKING' || state === 'EXECUTING'
 
@@ -175,6 +219,25 @@ export default function App() {
                 v={session?.lastLatencyMs ? `${(session.lastLatencyMs / 1000).toFixed(1)}s` : '—'}
               />
               <Row k="Session" v={session?.sessionId?.slice(0, 8) ?? '—'} />
+            </div>
+          </section>
+
+          <section className="panel" style={{ flex: '0 0 auto' }}>
+            <div className="panel-head">
+              <span>TOKENS</span>
+              <span
+                style={{ cursor: 'pointer' }}
+                title="Save per-turn token usage as CSV to your Desktop"
+                onClick={() => void window.jarvis.exportUsage()}
+              >
+                export
+              </span>
+            </div>
+            <div className="panel-body">
+              <Row k="This turn" v={turnTokens} />
+              <Row k="This session" v={sessionTokens} />
+              <Row k="Cache hit" v={cacheRatio} />
+              <Row k="All time" v={lifetimeTokens} />
             </div>
           </section>
 

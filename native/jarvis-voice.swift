@@ -197,6 +197,9 @@ final class Listener {
     private var lastPartialAt = Date.distantPast
     /// How long the transcript may stall before the utterance is closed.
     private var endpointSilence: TimeInterval = 0.75
+    private var currentLocale = "en-IN"
+    /// Consecutive transient engine-start failures, for backoff.
+    private var startAttempts = 0
 
     /// Apple's on-device model is markedly less accurate than the server one,
     /// especially for names and non-US accents. Off by default; the caller
@@ -310,8 +313,18 @@ final class Listener {
             return
         }
 
+        // Clear any previous graph: reusing a configured engine after a device
+        // change is what produces FormatNotSupported on the next start.
+        if engine.isRunning { engine.stop() }
+        engine.reset()
+
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        // Passing nil lets the engine use the node's own format at the moment the
+        // tap is created. Handing it a format read a few lines earlier races with
+        // device changes — plugging in AirPods between the read and the install
+        // throws 'format mismatch', an Objective-C exception Swift cannot catch,
+        // which killed the helper 14 times before this.
+        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
             guard let self = self else { return }
             self.request?.append(buffer)
             self.analyze(buffer)
@@ -321,13 +334,52 @@ final class Listener {
             self?.onRecognition(result, error)
         }
 
+        // Connecting or removing an audio device reconfigures the engine and
+        // silently stops the tap; restart so JARVIS does not go quietly deaf.
+        NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine)
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.running else { return }
+            emit(["type": "warn", "where": "audio", "message": "Audio device changed; restarting capture."])
+            let locale = self.currentLocale
+            self.stop()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                self?.start(locale: locale)
+            }
+        }
+
         engine.prepare()
         do {
             try engine.start()
             running = true
+            currentLocale = locale
+            startAttempts = 0
             emit(["type": "listening", "value": true])
         } catch {
-            emit(["type": "error", "where": "stt", "message": "Audio engine failed: \(error.localizedDescription)"])
+            // -10868 (kAudioUnitErr_FormatNotSupported) is normal while Bluetooth
+            // headphones switch between A2DP and the headset profile: for a moment
+            // the device advertises a format the engine will not accept. Waiting
+            // for the route to settle fixes it, so this is retried rather than
+            // reported as a dead microphone.
+            let code = (error as NSError).code
+            let transient = code == -10868 || code == -10851 || code == 561_017_449
+            if transient && startAttempts < 5 {
+                startAttempts += 1
+                let delay = 0.4 * Double(startAttempts)
+                emit(["type": "warn", "where": "stt",
+                      "message": "Audio device busy (\(code)); retrying in \(String(format: "%.1f", delay))s."])
+                engine.stop()
+                engine.reset()
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.start(locale: locale)
+                }
+                return
+            }
+            startAttempts = 0
+            emit(["type": "error", "where": "stt",
+                  "message": "Audio engine failed (\(code)): \(error.localizedDescription)"])
+            emit(["type": "listening", "value": false])
         }
     }
 

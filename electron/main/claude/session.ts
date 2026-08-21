@@ -28,6 +28,28 @@ export interface ToolActivity {
   input: unknown
 }
 
+export interface TokenUsage {
+  input: number
+  output: number
+  /** Tokens served from cache — cheap, and the bulk of a long session. */
+  cacheRead: number
+  cacheWrite: number
+}
+
+const NO_USAGE: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+
+function readUsage(raw: unknown): TokenUsage {
+  if (!raw || typeof raw !== 'object') return { ...NO_USAGE }
+  const u = raw as Record<string, unknown>
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    input: num(u.input_tokens),
+    output: num(u.output_tokens),
+    cacheRead: num(u.cache_read_input_tokens),
+    cacheWrite: num(u.cache_creation_input_tokens)
+  }
+}
+
 type Events = {
   init: [{ sessionId: string; model: string; tools: string[] }]
   /** Incremental assistant text, already de-duplicated against full messages. */
@@ -36,7 +58,7 @@ type Events = {
   message: [string]
   tool: [ToolActivity]
   toolResult: [{ id: string; isError: boolean }]
-  result: [{ text: string; turns: number; latencyMs: number; isError: boolean }]
+  result: [{ text: string; turns: number; latencyMs: number; isError: boolean; usage: TokenUsage }]
   error: [string]
   exit: [{ code: number | null; signal: string | null }]
   stderr: [string]
@@ -53,6 +75,14 @@ export class ClaudeSessionManager extends EventEmitter {
   model: string | null = null
   connected = false
   turns = 0
+  /** True while a turn is awaiting its result; resetting mid-turn would strand it. */
+  get isBusy(): boolean {
+    return this.pendingTurn !== null
+  }
+  lastUsage: TokenUsage = { ...NO_USAGE }
+  totalUsage: TokenUsage = { ...NO_USAGE }
+  /** Cumulative cost the CLI attributes to this session's subscription usage. */
+  sessionCostUsd = 0
   lastLatencyMs: number | null = null
 
   private turnStartedAt = 0
@@ -96,10 +126,11 @@ export class ClaudeSessionManager extends EventEmitter {
       // Voice turns should start fast: skip discovering and booting MCP servers
       // configured for other projects.
       '--strict-mcp-config',
-      // Spoken requests are mostly short, concrete actions. Low effort keeps
-      // replies snappy; complex work still escalates through tool use.
+      // 'low' made it visibly lazy: faced with "check this", it would ask what
+      // to check rather than take a screenshot, read it and answer. Medium keeps
+      // multi-step work (look → reason → act) while staying responsive.
       '--effort',
-      this.opts.effort ?? 'low'
+      this.opts.effort ?? 'medium'
     ]
 
     if (this.opts.model) args.push('--model', this.opts.model)
@@ -248,11 +279,23 @@ export class ClaudeSessionManager extends EventEmitter {
       this.lastLatencyMs = Date.now() - this.turnStartedAt
       if (typeof msg.session_id === 'string') this.sessionId = msg.session_id
 
+      const usage = readUsage(msg.usage)
+      this.lastUsage = usage
+      this.totalUsage = {
+        input: this.totalUsage.input + usage.input,
+        output: this.totalUsage.output + usage.output,
+        cacheRead: this.totalUsage.cacheRead + usage.cacheRead,
+        cacheWrite: this.totalUsage.cacheWrite + usage.cacheWrite
+      }
+      // Reported by the CLI as subscription accounting, not a separate charge.
+      if (typeof msg.total_cost_usd === 'number') this.sessionCostUsd = msg.total_cost_usd
+
       this.emit('result', {
         text,
         turns: this.turns,
         latencyMs: this.lastLatencyMs,
-        isError
+        isError,
+        usage
       })
 
       if (this.pendingTurn) {

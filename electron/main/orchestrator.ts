@@ -39,6 +39,7 @@ export interface OrchestratorOptions {
 export class Orchestrator extends EventEmitter {
   private state: JarvisState = 'IDLE'
   private conversationMode = false
+  private contextProvider: ((utterance: string) => Promise<string | null>) | null = null
   private convoTimer: NodeJS.Timeout | null = null
   private sentences = new SentenceStream()
   private currentTurnText = ''
@@ -355,6 +356,15 @@ export class Orchestrator extends EventEmitter {
   }
 
   /** Send a turn to Claude Code. Used by both voice and typed input. */
+  /**
+   * Supplies the caller-provided environment snapshot (frontmost app, window
+   * title) so a bare "fix this" has a referent. Cheap enough to run per turn;
+   * the screenshot itself is left to Claude, which takes one when it needs to.
+   */
+  setContextProvider(fn: (utterance: string) => Promise<string | null>): void {
+    this.contextProvider = fn
+  }
+
   async ask(text: string): Promise<void> {
     if (!this.claude.isRunning) {
       this.setState('ERROR')
@@ -370,7 +380,18 @@ export class Orchestrator extends EventEmitter {
     this.turnInFlight = true
 
     try {
-      await this.claude.send(text)
+      // Prefix the environment so deictic requests ("fix this", "what's this")
+      // resolve to whatever the user is actually looking at.
+      let payload = text
+      if (this.contextProvider) {
+        try {
+          const ctx = await this.contextProvider(text)
+          if (ctx) payload = `${ctx}\n\nUser said: ${text}`
+        } catch {
+          /* context is best-effort; never block the turn */
+        }
+      }
+      await this.claude.send(payload)
     } catch (err) {
       this.turnInFlight = false
       const msg = err instanceof Error ? err.message : String(err)

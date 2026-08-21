@@ -36,6 +36,18 @@ export interface SessionInfo {
   subscription: string | null
   lastLatencyMs: number | null
   turns: number
+  /** Tokens for the most recent turn, and the running total for this session. */
+  lastUsage?: TokenUsage
+  totalUsage?: TokenUsage
+  /** Lifetime totals across every session, from the local database. */
+  lifetimeUsage?: TokenUsage & { turns: number }
+}
+
+export interface TokenUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
 }
 
 export interface ErrorRecord {
