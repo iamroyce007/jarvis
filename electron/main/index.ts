@@ -40,6 +40,17 @@ import {
 } from './store/errors.js'
 import { recordUsage, lifetimeUsage, usageSince, exportUsage } from './store/usage.js'
 import {
+  graphSnapshot,
+  entityProfile,
+  searchEntities,
+  changesSince,
+  graphStats,
+  clearGraph
+} from './store/graph.js'
+import { extractFromExchange } from './intelligence/extract.js'
+import { research, recentBriefings, getBriefing, isBriefingRunning } from './intelligence/briefing.js'
+import { setSessionTools, setNativeAvailability, toolRegistry } from './intelligence/tools.js'
+import {
   recordTurn,
   recentTurns,
   searchTurns,
@@ -254,6 +265,31 @@ function wireEvents(): void {
       log(`turn ${t.speaker}:`, t.text.slice(0, 200))
     }
   })
+  // Each completed exchange feeds the World Graph. Extraction runs in a
+  // separate cheap call so it never enlarges the conversation context.
+  orchestrator.on('exchange', ({ user, assistant }) => {
+    void extractFromExchange(user, assistant, { cwd: workspaceRoot }).then((r) => {
+      if (r.entities || r.relations) {
+        send('graph-updated', { ...graphStats(), added: r })
+        // Newly learned names become recognisable in the next utterance.
+        voice.configure({ contextualStrings: recognitionHints() })
+      }
+    })
+  })
+
+  // Research intent starts a briefing in parallel with the spoken answer, so
+  // JARVIS replies immediately while the visual briefing assembles behind it.
+  orchestrator.on('request', (text) => {
+    const subject = researchSubject(text)
+    if (!subject || isBriefingRunning()) return
+    log('briefing triggered:', subject)
+    send('brief-progress', { subject, stage: 'Searching' })
+    void research(subject, {
+      cwd: workspaceRoot,
+      onProgress: (stage) => send('brief-progress', { subject, stage })
+    }).then((b) => send('brief-done', b))
+  })
+
   orchestrator.on('activity', (a) => send('activity', a))
   orchestrator.on('level', (l) => send('level', l))
   orchestrator.on('session', () => send('session', sessionInfo()))
@@ -261,6 +297,7 @@ function wireEvents(): void {
 
   claude.on('init', (i) => {
     log('claude INIT session=', i.sessionId, 'model=', i.model)
+    if (Array.isArray(i.tools)) setSessionTools(i.tools)
     send('session', sessionInfo())
   })
   claude.on('exit', (e) => {
@@ -445,8 +482,24 @@ function recognitionHints(): string[] {
   const verbs = [
     'JARVIS', 'open', 'close', 'quit', 'switch to', 'play', 'pause', 'skip',
     'volume', 'search', 'run the tests', 'commit', 'push', 'deploy', 'screenshot',
-    'send a message', 'reply', 'remind me', 'take a note', 'go to sleep', 'stop'
+    'send a message', 'reply', 'remind me', 'take a note', 'go to sleep', 'stop',
+    // Phrases that start a briefing, so the recogniser locks onto them.
+    'tell me everything about', 'brief me on', 'pull me information about',
+    'what happened at', 'who was', 'research'
   ]
+
+  // Names JARVIS already knows are the ones most likely to be said again, and
+  // proper nouns are exactly what a 16 kHz Bluetooth mic gets wrong.
+  let known: string[] = []
+  try {
+    known = graphSnapshot(200)
+      .entities.filter((e) => e.name.length > 2 && e.name.length < 40)
+      .sort((a, b) => b.mentions - a.mentions)
+      .slice(0, 40)
+      .map((e) => e.name)
+  } catch {
+    /* graph may be empty on first run */
+  }
   const apps: string[] = []
   for (const dir of ['/Applications', '/System/Applications', join(homedir(), 'Applications')]) {
     try {
@@ -457,7 +510,7 @@ function recognitionHints(): string[] {
       /* directory may not exist */
     }
   }
-  return [...verbs, ...apps].slice(0, 100)
+  return [...new Set([...verbs, ...known, ...apps])].slice(0, 100)
 }
 
 /**
@@ -554,10 +607,88 @@ async function screenContext(utterance: string): Promise<string | null> {
   }
 }
 
+/** Mirrors macOS grants into the capability registry the UI displays. */
+function syncNativeTools(caps: Capabilities): void {
+  setNativeAvailability({
+    ScreenCapture: caps.screenRecording,
+    UIControl: caps.accessibility,
+    AppleEvents: caps.automation,
+    Voice: speechAuthorized,
+    WorldGraph: true,
+    History: true
+  })
+}
+
+/**
+ * Detects a request for a briefing and returns its subject.
+ *
+ * Deliberately narrow: a briefing costs a full research pass, so it fires only
+ * on phrasing that is unambiguously a request to be told about something,
+ * never on ordinary conversation or commands about this machine.
+ */
+function researchSubject(text: string): string | null {
+  const t = text.trim().replace(/[?.!]+$/, '')
+  const patterns: RegExp[] = [
+    // "brief me on X", "give me a rundown on X", "full dossier about X"
+    /^(?:jarvis[,\s]+)?(?:give me |get me |i want |show me |pull (?:me |up )?)?(?:a |an |the )?(?:full |detailed |complete |quick |all (?:the )?)?(?:brief|briefing|breakdown|rundown|profile|dossier|report|information|info|details|background)(?: me)?(?: on| about| of| regarding)\s+(.+)$/i,
+    // "research X", "look into X", "dig into X"
+    /^(?:jarvis[,\s]+)?(?:research|investigate|look into|dig into|find out about|read up on|brief me on)\s+(.+)$/i,
+    // "tell me about X", "tell me everything about X"
+    /^(?:jarvis[,\s]+)?(?:tell me|what do you know|explain)\s+(?:everything\s+|all\s+|more\s+)?about\s+(.+)$/i,
+    // "who is X", "what was the X disaster"
+    /^(?:jarvis[,\s]+)?who (?:is|was|are|were)\s+(.+)$/i,
+    /^(?:jarvis[,\s]+)?what (?:is|was|were)\s+(?:the\s+)?(.+?(?:disaster|incident|attack|crisis|scandal|war|case|event|accident))$/i,
+    /^(?:jarvis[,\s]+)?what (?:is|was) the story (?:behind|of)\s+(.+)$/i,
+    // "what happened with/at/to X"
+    /^(?:jarvis[,\s]+)?what happened (?:with|at|to|in|during)\s+(.+)$/i
+  ]
+  for (const re of patterns) {
+    const m = t.match(re)
+    if (m?.[1]) {
+      const subject = m[1].trim()
+      // Questions about this machine are handled by the normal turn, not research.
+      if (/\b(my|this) (mac|computer|screen|file|project|code)\b/i.test(subject)) return null
+      return subject.length >= 2 && subject.length <= 120 ? subject : null
+    }
+  }
+  return null
+}
+
 function registerIpc(): void {
   ipcMain.handle('voice:open-settings', (_e, pane: 'SpeechRecognition' | 'Microphone' | 'Dictation') =>
     openPrivacySettings(pane)
   )
+  ipcMain.handle('brief:research', async (_e, subject: string) => {
+    const b = await research(subject, {
+      cwd: workspaceRoot,
+      onProgress: (stage) => send('brief-progress', { subject, stage })
+    })
+    send('brief-done', b)
+    return b
+  })
+  ipcMain.handle('brief:recent', (_e, limit?: number) => recentBriefings(limit ?? 20))
+  ipcMain.handle('brief:get', (_e, id: string) => getBriefing(id))
+  ipcMain.handle('brief:running', () => isBriefingRunning())
+
+  ipcMain.handle('graph:snapshot', (_e, limit?: number) => graphSnapshot(limit ?? 120))
+  ipcMain.handle('graph:profile', (_e, id: string) => entityProfile(id))
+  ipcMain.handle('graph:search', (_e, q: string) => searchEntities(q))
+  ipcMain.handle('graph:changes', (_e, sinceMs?: number) =>
+    changesSince(sinceMs ?? 24 * 60 * 60 * 1000)
+  )
+  ipcMain.handle('graph:stats', () => graphStats())
+  ipcMain.handle('graph:clear', () => clearGraph())
+
+  ipcMain.handle('tools:registry', () => toolRegistry())
+
+  // Emergency stop: cancels speech, the in-flight turn and any queued work.
+  ipcMain.handle('jarvis:halt', () => {
+    const halted = orchestrator.halt()
+    log('EMERGENCY HALT:', JSON.stringify(halted))
+    send('halted', halted)
+    return halted
+  })
+
   ipcMain.handle('usage:export', async () => {
     const { writeFile } = await import('node:fs/promises')
     const out = join(homedir(), 'Desktop', `jarvis-tokens-${Date.now()}.csv`)
@@ -651,6 +782,7 @@ app.whenReady().then(async () => {
   // Sight and control. Claude Code inherits these grants as a child process.
   orchestrator.setContextProvider(screenContext)
   capabilities = await requestCapabilities()
+  syncNativeTools(capabilities)
   send('capabilities', capabilities)
   if (!capabilities.screenRecording || !capabilities.accessibility) {
     void explainMissing(capabilities)
@@ -660,6 +792,7 @@ app.whenReady().then(async () => {
     const next = await checkCapabilities()
     if (JSON.stringify(next) !== JSON.stringify(capabilities)) {
       capabilities = next
+      syncNativeTools(next)
       log('capabilities changed:', JSON.stringify(next))
       send('capabilities', next)
     }

@@ -1,12 +1,18 @@
 export type JarvisState =
   | 'IDLE'
   | 'LISTENING'
+  | 'UNDERSTANDING'
   | 'THINKING'
+  | 'PLANNING'
+  | 'RESEARCHING'
   | 'EXECUTING'
   | 'WAITING_FOR_CONFIRMATION'
   | 'SPEAKING'
+  | 'SUCCESS'
+  | 'WARNING'
   | 'INTERRUPTED'
   | 'ERROR'
+  | 'EMERGENCY_HALT'
 
 export type Speaker = 'user' | 'jarvis'
 
@@ -115,4 +121,152 @@ export interface VoiceConfig {
   conversationTimeoutMs: number
   sttEnabled: boolean
   ttsEnabled: boolean
+}
+
+// ---------------------------------------------------------------------------
+// World Graph (mirrors electron/main/store/graph.ts for the renderer)
+// ---------------------------------------------------------------------------
+
+export type EntityKind =
+  | 'person' | 'organization' | 'company' | 'event' | 'place' | 'product'
+  | 'technology' | 'document' | 'file' | 'repository' | 'service' | 'device'
+  | 'project' | 'task' | 'concept' | 'financial' | 'team' | 'other'
+
+export type Confidence =
+  | 'confirmed' | 'corroborated' | 'reported' | 'inferred' | 'disputed' | 'unknown'
+
+export interface GraphEntity {
+  id: string
+  kind: EntityKind
+  name: string
+  summary: string | null
+  confidence: Confidence
+  attributes: Record<string, unknown>
+  firstSeen: number
+  lastSeen: number
+  mentions: number
+}
+
+export interface GraphRelation {
+  id: string
+  sourceId: string
+  targetId: string
+  kind: string
+  label: string | null
+  confidence: Confidence
+  at: number
+  weight: number
+}
+
+export interface GraphEvidence {
+  id: string
+  subjectId: string
+  subjectType: 'entity' | 'relation'
+  claim: string
+  source: string
+  sourceKind: 'web' | 'file' | 'conversation' | 'screen' | 'tool' | 'user'
+  excerpt: string | null
+  confidence: Confidence
+  at: number
+}
+
+export interface GraphTimelineEntry {
+  id: string
+  entityId: string
+  at: number
+  occurredAt: number | null
+  label: string
+  detail: string | null
+  kind: string
+  confidence: Confidence
+}
+
+export interface EntityProfile {
+  entity: GraphEntity | null
+  relations: (GraphRelation & { other: GraphEntity; direction: 'out' | 'in' })[]
+  evidence: GraphEvidence[]
+  timeline: GraphTimelineEntry[]
+}
+
+export interface GraphSnapshot {
+  entities: GraphEntity[]
+  relations: GraphRelation[]
+}
+
+export interface GraphStats {
+  entities: number
+  relations: number
+  evidence: number
+}
+
+export interface ToolSpec {
+  name: string
+  category: string
+  purpose: string
+  risk: 'safe' | 'caution' | 'dangerous'
+  available: boolean
+  requiresPermission?: string
+}
+
+export interface HaltResult {
+  speech: boolean
+  turn: boolean
+  what: string
+}
+
+export interface Capabilities {
+  screenRecording: boolean
+  accessibility: boolean
+  automation: boolean
+}
+
+// --------------------------------------------------------------- briefings
+
+export interface BriefingSource {
+  id: number
+  title: string
+  url: string
+  domain: string
+  publisher?: string
+  date?: string
+  reachable?: boolean | null
+  image?: string | null
+}
+
+export interface BriefingSection {
+  title: string
+  body: string
+  confidence: Confidence
+  sources: number[]
+}
+
+export interface BriefingClaim {
+  statement: string
+  confidence: Confidence
+  sources: number[]
+}
+
+export interface BriefingTimelineItem {
+  date: string
+  label: string
+  detail?: string
+  confidence: Confidence
+  sources: number[]
+}
+
+export interface Briefing {
+  id: string
+  subject: string
+  kind: string
+  headline: string
+  summary: string
+  at: number
+  ms: number
+  sections: BriefingSection[]
+  timeline: BriefingTimelineItem[]
+  entities: { name: string; kind: string; role?: string }[]
+  claims: BriefingClaim[]
+  sources: BriefingSource[]
+  openQuestions: string[]
+  failure?: string
 }

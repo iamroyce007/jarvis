@@ -1,0 +1,185 @@
+/*
+ * JARVIS design system.
+ *
+ * One rule governs everything here: a visual property must encode state,
+ * information, relationship, priority or action. Colour carries meaning —
+ * cyan is the system, amber is caution, red is failure, green is confirmed —
+ * so nothing is tinted for decoration alone.
+ */
+
+:root {
+  /* Environment ---------------------------------------------------------- */
+  --void: #04070c;
+  --deep: #070c14;
+  --surface: rgba(14, 22, 34, 0.72);
+  --surface-raised: rgba(20, 30, 45, 0.86);
+  --glass-edge: rgba(120, 190, 235, 0.14);
+  --glass-edge-strong: rgba(130, 205, 255, 0.3);
+
+  /* System accent (JARVIS itself) ---------------------------------------- */
+  --cyan: #4fd6ff;
+  --cyan-dim: #2a8db3;
+  --cyan-glow: rgba(79, 214, 255, 0.5);
+  --cyan-faint: rgba(79, 214, 255, 0.08);
+
+  /* Semantic states ------------------------------------------------------ */
+  --ok: #52e0a8;
+  --warn: #ffb454;
+  --danger: #ff6b6b;
+  --unknown: #8a94a6;
+  --thinking: #9d8cff;
+  --research: #6ba8ff;
+
+  /* Confidence — meaning is carried by colour AND label, never colour alone */
+  --confirmed: #52e0a8;
+  --corroborated: #7fd4c1;
+  --reported: #6ba8ff;
+  --inferred: #9d8cff;
+  --disputed: #ffb454;
+  --unknown-conf: #6b7686;
+
+  /* Text ----------------------------------------------------------------- */
+  --ink: #e8f2fb;
+  --ink-soft: #a9bccf;
+  --ink-faint: #6b8299;
+  --ink-ghost: #3f5568;
+
+  /* Geometry ------------------------------------------------------------- */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --hair: 1px;
+
+  /* Motion — every duration is tied to a perceptual purpose */
+  --instant: 90ms;
+  --quick: 180ms;
+  --smooth: 320ms;
+  --slow: 640ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  --mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+
+/* State → colour. Used by the core, the status rail and panel accents. */
+[data-state='IDLE'] { --state-color: var(--cyan-dim); }
+[data-state='LISTENING'] { --state-color: var(--cyan); }
+[data-state='UNDERSTANDING'] { --state-color: var(--research); }
+[data-state='THINKING'] { --state-color: var(--thinking); }
+[data-state='PLANNING'] { --state-color: var(--thinking); }
+[data-state='RESEARCHING'] { --state-color: var(--research); }
+[data-state='EXECUTING'] { --state-color: var(--cyan); }
+[data-state='WAITING_FOR_CONFIRMATION'] { --state-color: var(--warn); }
+[data-state='SPEAKING'] { --state-color: var(--cyan); }
+[data-state='SUCCESS'] { --state-color: var(--ok); }
+[data-state='WARNING'] { --state-color: var(--warn); }
+[data-state='INTERRUPTED'] { --state-color: var(--warn); }
+[data-state='ERROR'] { --state-color: var(--danger); }
+[data-state='EMERGENCY_HALT'] { --state-color: var(--danger); }
+
+/* Confidence chips ------------------------------------------------------- */
+.conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: var(--hair) solid currentColor;
+  opacity: 0.9;
+}
+.conf::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.conf-confirmed { color: var(--confirmed); }
+.conf-corroborated { color: var(--corroborated); }
+.conf-reported { color: var(--reported); }
+.conf-inferred { color: var(--inferred); }
+.conf-disputed { color: var(--disputed); }
+.conf-unknown { color: var(--unknown-conf); }
+
+/* Risk chips ------------------------------------------------------------- */
+.risk-safe { color: var(--ok); }
+.risk-caution { color: var(--warn); }
+.risk-dangerous { color: var(--danger); }
+
+/* Holographic panel ------------------------------------------------------ */
+.holo {
+  position: relative;
+  background: var(--surface);
+  border: var(--hair) solid var(--glass-edge);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+  overflow: hidden;
+}
+/* A single hairline of system light along the top edge. */
+.holo::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--glass-edge-strong) 20%,
+    var(--glass-edge-strong) 80%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+.holo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: var(--hair) solid var(--glass-edge);
+  user-select: none;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.holo-body {
+  padding: 10px 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Scrollbars stay out of the way until needed. */
+.holo-body::-webkit-scrollbar { width: 8px; }
+.holo-body::-webkit-scrollbar-track { background: transparent; }
+.holo-body::-webkit-scrollbar-thumb {
+  background: rgba(120, 190, 235, 0.14);
+  border-radius: 4px;
+}
+.holo-body::-webkit-scrollbar-thumb:hover { background: rgba(120, 190, 235, 0.28); }
+
+/* Motion preferences ----------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Focus is always visible — the interface must be operable from the keyboard */
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: 3px;
+}

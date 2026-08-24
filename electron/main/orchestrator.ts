@@ -27,6 +27,11 @@ type Events = {
   level: [number]
   session: []
   error: [string]
+  /** A completed user/assistant pair, for downstream graph extraction. */
+  exchange: [{ user: string; assistant: string }]
+  /** A user request that has been accepted, emitted before Claude answers. */
+  request: [string]
+  halted: [{ speech: boolean; turn: boolean; what: string }]
 }
 
 export interface OrchestratorOptions {
@@ -48,6 +53,8 @@ export class Orchestrator extends EventEmitter {
 
   /** True while a Claude turn is in flight, so barge-in knows to cancel it. */
   private turnInFlight = false
+  /** The request the in-flight turn is answering, paired on completion. */
+  private currentRequest = ''
   /** A risky request held back until the user says yes. */
   private pendingRequest: string | null = null
 
@@ -181,6 +188,11 @@ export class Orchestrator extends EventEmitter {
         return
       }
 
+      if (this.currentRequest && full) {
+        this.emit('exchange', { user: this.currentRequest, assistant: full })
+      }
+      this.currentRequest = ''
+
       this.emit('session')
       if (!this.voice.speaking) {
         this.setState(this.conversationMode ? 'LISTENING' : 'IDLE')
@@ -193,6 +205,35 @@ export class Orchestrator extends EventEmitter {
       this.setState('ERROR')
       this.emit('error', msg)
     })
+  }
+
+  /**
+   * Emergency stop. Unlike barge-in this is explicit and reported: it stops
+   * speech, abandons the running turn, drops anything queued and leaves JARVIS
+   * idle rather than listening for a follow-up.
+   */
+  halt(): { speech: boolean; turn: boolean; what: string } {
+    const speech = this.voice.speaking
+    const turn = this.turnInFlight
+
+    this.voice.shutUp()
+    this.sentences.reset()
+    this.currentTurnText = ''
+    this.pendingRequest = null
+    if (turn) this.claude.interrupt()
+    this.turnInFlight = false
+    this.clearConversationTimeout()
+    this.setState('INTERRUPTED')
+
+    const parts: string[] = []
+    if (speech) parts.push('speech')
+    if (turn) parts.push(`request: ${this.currentRequest.slice(0, 80) || 'in progress'}`)
+    const what = parts.length ? parts.join(' · ') : 'nothing was running'
+    this.currentRequest = ''
+
+    const result = { speech, turn, what }
+    this.emit('halted', result)
+    return result
   }
 
   /** Cut off speech and abandon the in-flight Claude turn. */
@@ -333,7 +374,14 @@ export class Orchestrator extends EventEmitter {
   private handleLocalCommand(text: string): boolean {
     const t = text.toLowerCase().replace(/[.!?]+$/, '').trim()
 
-    if (/^(stop|quiet|silence|shut up|never ?mind)$/.test(t)) {
+    // Emergency stop is deliberately matched before anything else and accepts
+    // the phrasings people actually use under pressure.
+    if (/^(jarvis[,\s]+)?(stop everything|cancel everything|emergency stop|abort|halt)$/.test(t)) {
+      this.halt()
+      this.setState('EMERGENCY_HALT')
+      return true
+    }
+    if (/^(stop|quiet|silence|shut up|never ?mind|cancel that|wait)$/.test(t)) {
       this.bargeIn()
       return true
     }
@@ -382,6 +430,8 @@ export class Orchestrator extends EventEmitter {
     try {
       // Prefix the environment so deictic requests ("fix this", "what's this")
       // resolve to whatever the user is actually looking at.
+      this.currentRequest = text
+      this.emit('request', text)
       let payload = text
       if (this.contextProvider) {
         try {

@@ -196,7 +196,13 @@ final class Listener {
     private var rearmToken = UUID()
     private var lastPartialAt = Date.distantPast
     /// How long the transcript may stall before the utterance is closed.
-    private var endpointSilence: TimeInterval = 0.75
+    ///
+    /// People pause mid-sentence — to think, to breathe, to find a word. At
+    /// 0.75s a single request was routinely chopped into two turns ("Pull me
+    /// information" / "About Osama bin Laden"), which reads as terrible
+    /// recognition even when every word was transcribed correctly. 1.4s is
+    /// long enough to ride through a natural pause and still feel responsive.
+    private var endpointSilence: TimeInterval = 1.4
     private var currentLocale = "en-IN"
     /// Consecutive transient engine-start failures, for backoff.
     private var startAttempts = 0
@@ -313,10 +319,11 @@ final class Listener {
             return
         }
 
-        // Clear any previous graph: reusing a configured engine after a device
-        // change is what produces FormatNotSupported on the next start.
+        // Stop a running engine before re-tapping, but do NOT reset() it:
+        // reset tears down the input node's negotiated format, after which the
+        // next start fails with FormatNotSupported (-10868) on devices whose
+        // hardware format differs from the default, such as Bluetooth mics.
         if engine.isRunning { engine.stop() }
-        engine.reset()
 
         input.removeTap(onBus: 0)
         // Passing nil lets the engine use the node's own format at the moment the
@@ -370,7 +377,6 @@ final class Listener {
                 emit(["type": "warn", "where": "stt",
                       "message": "Audio device busy (\(code)); retrying in \(String(format: "%.1f", delay))s."])
                 engine.stop()
-                engine.reset()
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     self?.start(locale: locale)
                 }

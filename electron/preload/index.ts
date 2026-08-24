@@ -21,6 +21,29 @@ const api = {
   setPersonality: (p: string): Promise<SessionInfo> =>
     ipcRenderer.invoke('claude:set-personality', p),
 
+  // Briefings
+  research: (subject: string) => ipcRenderer.invoke('brief:research', subject),
+  recentBriefings: (limit?: number) => ipcRenderer.invoke('brief:recent', limit),
+  getBriefing: (id: string) => ipcRenderer.invoke('brief:get', id),
+  onBriefProgress: (cb: (p: unknown) => void) => sub('brief-progress', cb),
+  onBriefDone: (cb: (b: unknown) => void) => sub('brief-done', cb),
+
+  // World Graph
+  graphSnapshot: (limit?: number) => ipcRenderer.invoke('graph:snapshot', limit),
+  graphProfile: (id: string) => ipcRenderer.invoke('graph:profile', id),
+  graphSearch: (q: string) => ipcRenderer.invoke('graph:search', q),
+  graphChanges: (sinceMs?: number) => ipcRenderer.invoke('graph:changes', sinceMs),
+  graphStats: () => ipcRenderer.invoke('graph:stats'),
+  clearGraph: (): Promise<void> => ipcRenderer.invoke('graph:clear'),
+  onGraphUpdated: (cb: (s: unknown) => void) => sub('graph-updated', cb),
+
+  // Capabilities + emergency stop
+  toolRegistry: () => ipcRenderer.invoke('tools:registry'),
+  halt: () => ipcRenderer.invoke('jarvis:halt'),
+  onHalted: (cb: (r: unknown) => void) => sub('halted', cb),
+  getCapabilities: () => ipcRenderer.invoke('caps:get'),
+  onCapabilities: (cb: (c: unknown) => void) => sub('capabilities', cb),
+
   exportUsage: (): Promise<string> => ipcRenderer.invoke('usage:export'),
 
   getHistory: (limit?: number): Promise<Turn[]> => ipcRenderer.invoke('history:recent', limit),

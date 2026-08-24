@@ -3,7 +3,15 @@ import type {
   JarvisState,
   TranscriptEntry,
   ActivityStep,
-  ErrorRecord
+  ErrorRecord,
+  GraphSnapshot,
+  EntityProfile,
+  GraphEntity,
+  GraphStats,
+  ToolSpec,
+  HaltResult,
+  Capabilities,
+  Briefing
 } from '../shared/types'
 
 interface HistoryTurn {
@@ -30,6 +38,29 @@ declare global {
       openVoiceSettings(pane: 'SpeechRecognition' | 'Microphone' | 'Dictation'): Promise<void>
       newSession(): Promise<SessionInfo>
       setPersonality(p: string): Promise<SessionInfo>
+      research(subject: string): Promise<Briefing>
+      recentBriefings(limit?: number): Promise<{ id: string; subject: string; kind: string; at: number }[]>
+      getBriefing(id: string): Promise<Briefing | null>
+      onBriefProgress(cb: (p: { subject: string; stage: string }) => void): () => void
+      onBriefDone(cb: (b: Briefing) => void): () => void
+      graphSnapshot(limit?: number): Promise<GraphSnapshot>
+      graphProfile(id: string): Promise<EntityProfile>
+      graphSearch(q: string): Promise<GraphEntity[]>
+      graphChanges(sinceMs?: number): Promise<{
+        newEntities: GraphEntity[]
+        newRelations: (import('../shared/types').GraphRelation & {
+          sourceName: string
+          targetName: string
+        })[]
+      }>
+      graphStats(): Promise<GraphStats>
+      clearGraph(): Promise<void>
+      onGraphUpdated(cb: (s: GraphStats & { added: unknown }) => void): () => void
+      toolRegistry(): Promise<ToolSpec[]>
+      halt(): Promise<HaltResult>
+      onHalted(cb: (r: HaltResult) => void): () => void
+      getCapabilities(): Promise<Capabilities>
+      onCapabilities(cb: (c: Capabilities) => void): () => void
       exportUsage(): Promise<string>
       getHistory(limit?: number): Promise<HistoryTurn[]>
       searchHistory(q: string, limit?: number): Promise<HistoryTurn[]>
