@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { JarvisCore } from './components/JarvisCore'
 import { WorldGraph, type Lens } from './components/WorldGraph'
 import { EntityPanel } from './components/EntityPanel'
-import { BriefingView } from './components/BriefingView'
+import { Storyboard } from './components/Storyboard'
+import { ScenarioView } from './components/ScenarioView'
 import type {
   JarvisState,
   TranscriptEntry,
@@ -12,7 +13,11 @@ import type {
   ToolSpec,
   HaltResult,
   Capabilities,
-  Briefing
+  Briefing,
+  Spotlight,
+  Projection,
+  GraphChanges,
+  IntentInfo
 } from '../shared/types'
 
 /**
@@ -62,9 +67,13 @@ export default function App() {
   const [tools, setTools] = useState<ToolSpec[]>([])
   const [caps, setCaps] = useState<Capabilities | null>(null)
   const [halted, setHalted] = useState<HaltResult | null>(null)
-  const [view, setView] = useState<'graph' | 'tools' | 'brief'>('graph')
+  const [view, setView] = useState<'graph' | 'tools' | 'brief' | 'scenario' | 'changes'>('graph')
   const [briefing, setBriefing] = useState<Briefing | null>(null)
   const [briefStage, setBriefStage] = useState<{ subject: string; stage: string } | null>(null)
+  const [spot, setSpot] = useState<Spotlight | null>(null)
+  const [projection, setProjection] = useState<Projection | null>(null)
+  const [changes, setChanges] = useState<GraphChanges | null>(null)
+  const [intent, setIntent] = useState<IntentInfo | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const hasScrolledToLatest = useRef(false)
@@ -98,6 +107,12 @@ export default function App() {
     )
     refreshGraph()
 
+    // The last briefing survives a restart, so an investigation can be picked
+    // up where it was left rather than re-researched.
+    void api.recentBriefings(1).then((list) => {
+      if (list.length > 0) void api.getBriefing(list[0].id).then((b) => b && setBriefing(b))
+    })
+
     const offs = [
       api.onListening(setListening),
       api.onState(setState),
@@ -108,6 +123,18 @@ export default function App() {
         void api.toolRegistry().then(setTools)
       }),
       api.onGraphUpdated(() => refreshGraph()),
+      api.onSpotlight((s) => setSpot(s)),
+      api.onIntent((i) => setIntent(i)),
+      api.onProjection((p) => {
+        setProjection(p)
+        setView('scenario')
+      }),
+      api.onChanges((c) => {
+        setChanges(c)
+        setView('changes')
+      }),
+      api.onFocusView(() => setView('brief')),
+      api.onPresent(() => setView('brief')),
       api.onBriefProgress((p) => {
         setBriefStage(p)
         setView('brief')
@@ -230,6 +257,12 @@ export default function App() {
           <span className="state-dot" />
           <span className="state-name">{state.replace(/_/g, ' ')}</span>
           <span className="state-caption">{STATE_CAPTION[state]}</span>
+          {intent && intent.view !== 'none' ? (
+            <span className="intent-chip" title={intent.inherited ? 'subject inherited from context' : ''}>
+              {intent.view}
+              {intent.subject ? ` · ${intent.subject}` : ''}
+            </span>
+          ) : null}
         </div>
 
         <div className="rail-right">
@@ -242,6 +275,73 @@ export default function App() {
         </div>
       </header>
 
+      {spot ? (
+        <div className="spot" onClick={() => setSpot(null)}>
+          <div className="spot-stage" onClick={(e) => e.stopPropagation()}>
+            <div className="spot-inner">
+              {spot.image ? (
+                <figure className="spot-fig">
+                  <img src={spot.image} alt={spot.title ?? spot.subject} />
+                  <figcaption>
+                    {spot.credit}
+                    {spot.sourceUrl ? (
+                      <a href={spot.sourceUrl} target="_blank" rel="noreferrer"> · open source</a>
+                    ) : null}
+                  </figcaption>
+                </figure>
+              ) : (
+                <div className="spot-none">{spot.failure}</div>
+              )}
+
+              <div className="spot-meta">
+                <div className="spot-title">{spot.title ?? spot.subject}</div>
+                {spot.description ? <div className="spot-desc">{spot.description}</div> : null}
+                {spot.extract ? <p className="spot-extract">{spot.extract}</p> : null}
+
+                {spot.pages.length ? (
+                  <div className="spot-pages">
+                    <div className="spot-pages-head">Pulled from {spot.pages.length} sources</div>
+                    {spot.pages.map((p) => (
+                      <a key={p.url} className="spot-page" href={p.url} target="_blank" rel="noreferrer">
+                        <span className="spot-page-pub">{p.publisher}</span>
+                        <span className="spot-page-title">{p.title}</span>
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="spot-actions">
+                  <button
+                    className="sb-btn"
+                    onClick={() => {
+                      setSpot(null)
+                      void window.jarvis.research(spot.subject)
+                    }}
+                  >
+                    Full briefing
+                  </button>
+                  <button className="sb-btn ghost" onClick={() => setSpot(null)}>Dismiss</button>
+                </div>
+              </div>
+            </div>
+
+            {spot.gallery.length ? (
+              <div className="wall">
+                <div className="wall-head">More imagery · {spot.gallery.length} sources</div>
+                <div className="wall-strip">
+                  {spot.gallery.map((g) => (
+                    <a key={g.url} className="wall-item" href={g.pageUrl} target="_blank" rel="noreferrer">
+                      <img src={g.url} alt="" loading="lazy" />
+                      <span className="wall-pub">{g.publisher}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {halted ? (
         <div className="halt-banner" role="status">
           <strong>SYSTEM HALTED</strong>
@@ -249,7 +349,7 @@ export default function App() {
         </div>
       ) : null}
 
-      <div className="workspace">
+      <div className={`workspace ${view === 'brief' ? 'cinema' : ''}`}>
         {/* ---------------------------------------------------- conversation */}
         <section className="holo col-conv">
           <div className="holo-head">
@@ -333,14 +433,14 @@ export default function App() {
 
         {/* ----------------------------------------------------- centre stage */}
         <section className="stage">
-          <div className="stage-top">
+          <div className="stage-top" style={view === 'brief' ? { display: 'none' } : undefined}>
             <div className="core-holder">
               <JarvisCore state={state} level={level} size={190} />
             </div>
           </div>
 
-          <div className="holo stage-graph">
-            <div className="holo-head">
+          <div className={`holo stage-graph ${view === 'brief' ? 'bare' : ''}`}>
+            <div className="holo-head" style={view === 'brief' ? { display: 'none' } : undefined}>
               <div className="lenses">
                 {view === 'graph' ? (
                   LENSES.map((l) => (
@@ -379,20 +479,62 @@ export default function App() {
             </div>
 
             <div className="graph-area">
-              {view === 'brief' ? (
+              {view === 'scenario' && projection ? (
+                <ScenarioView projection={projection} onClose={() => setView('graph')} />
+              ) : view === 'changes' && changes ? (
+                <div className="ch">
+                  <div className="ch-top">
+                    <div>
+                      <div className="ch-eyebrow">What changed</div>
+                      <h2 className="ch-title">Last 24 hours</h2>
+                    </div>
+                    <button className="sb-btn ghost" onClick={() => setView('graph')}>Close</button>
+                  </div>
+                  {changes.newEntities.length === 0 && changes.newRelations.length === 0 ? (
+                    <div className="empty">Nothing new since yesterday.</div>
+                  ) : (
+                    <>
+                      {changes.newEntities.length ? (
+                        <section>
+                          <div className="ch-label">New — {changes.newEntities.length}</div>
+                          {changes.newEntities.map((e) => (
+                            <div key={e.id} className="ch-row">
+                              <span className="ch-kind">{e.kind}</span>
+                              <span className="ch-name">{e.name}</span>
+                              <span className={`conf conf-${e.confidence}`}>{e.confidence}</span>
+                            </div>
+                          ))}
+                        </section>
+                      ) : null}
+                      {changes.newRelations.length ? (
+                        <section>
+                          <div className="ch-label">
+                            New connections — {changes.newRelations.length}
+                          </div>
+                          {changes.newRelations.map((r) => (
+                            <div key={r.id} className="ch-row">
+                              <span className="ch-name">{r.sourceName}</span>
+                              <span className="ch-rel">{r.kind.replace(/_/g, ' ')}</span>
+                              <span className="ch-name">{r.targetName}</span>
+                            </div>
+                          ))}
+                        </section>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : view === 'brief' ? (
                 briefing ? (
-                  <BriefingView
+                  <Storyboard
                     briefing={briefing}
                     stage={briefStage?.stage ?? null}
                     onClose={() => setView('graph')}
+                    onInvestigate={(subject) => void window.jarvis.ask(`Tell me about ${subject}`)}
                   />
                 ) : (
-                  <div className="brief-loading">
-                    <div className="brief-loading-subject">{briefStage?.subject}</div>
-                    <div className="brief-loading-stage">{briefStage?.stage ?? 'Researching'}…</div>
-                    <div className="brief-loading-note">
-                      Searching sources, verifying links, building the profile.
-                    </div>
+                  <div className="sb sb-loading">
+                    <div className="sb-loading-subject">{briefStage?.subject}</div>
+                    <div className="sb-loading-stage">{briefStage?.stage ?? 'Researching'}…</div>
                   </div>
                 )
               ) : view === 'graph' ? (

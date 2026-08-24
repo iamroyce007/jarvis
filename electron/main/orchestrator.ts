@@ -133,7 +133,7 @@ export class Orchestrator extends EventEmitter {
 
     // The helper re-arms recognition itself after every final result, so no
     // cycle() is issued here — two overlapping tasks drop audio between them.
-    this.voice.on('final', (text) => void this.onFinalTranscript(text))
+    this.voice.on('final', (text, confidence) => void this.onFinalTranscript(text, confidence))
 
     this.voice.on('ttsEnd', ({ cancelled }) => {
       if (cancelled) return
@@ -286,9 +286,49 @@ export class Orchestrator extends EventEmitter {
     return SOLO.has(single)
   }
 
-  private async onFinalTranscript(raw: string): Promise<void> {
+  /**
+   * Confidence below this is treated as a guess.
+   *
+   * Apple reports 0 for on-device passes and for short utterances, so zero is
+   * explicitly *not* low — only a real, non-zero-but-poor score triggers a
+   * confirmation. Acting on a misheard command is worse than asking once.
+   */
+  private static readonly LOW_CONFIDENCE = 0.35
+
+  /** A request held back because the transcript was uncertain. */
+  private unconfirmedTranscript: string | null = null
+
+  private async onFinalTranscript(raw: string, confidence = 0): Promise<void> {
     const text = raw.trim()
     if (!text) return
+
+    // "Yes/no" answering a confirmation we asked for.
+    if (this.unconfirmedTranscript) {
+      const pending = this.unconfirmedTranscript
+      this.unconfirmedTranscript = null
+      if (/^(yes|yeah|yep|correct|right|that'?s right|do it|go ahead|sure)\b/i.test(text)) {
+        await this.ask(pending)
+        return
+      }
+      if (/^(no|nope|wrong|not that|never ?mind|cancel)\b/i.test(text)) {
+        this.say('Okay, ignore that.')
+        this.setState(this.conversationMode ? 'LISTENING' : 'IDLE')
+        return
+      }
+      // Anything else is simply the corrected instruction; fall through.
+    }
+
+    // Uncertain transcription is confirmed, never executed blind. Short
+    // acknowledgements are exempt — they are cheap to get wrong.
+    const words = text.split(/\s+/).length
+    if (confidence > 0 && confidence < Orchestrator.LOW_CONFIDENCE && words >= 3) {
+      this.unconfirmedTranscript = text
+      const q = `I heard "${text}". Is that right?`
+      this.setState('WAITING_FOR_CONFIRMATION')
+      this.pushTranscript('jarvis', q)
+      this.say(q)
+      return
+    }
 
     const { addressed, rest } = this.stripWakeWord(text)
 

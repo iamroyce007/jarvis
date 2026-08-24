@@ -653,3 +653,11 @@ body::before {
   animation: breathe 1.8s var(--ease-in-out) infinite;
 }
 .brief-loading-note { font-size: 10px; color: var(--ink-ghost); max-width: 260px; line-height: 1.5; }
+
+/* A briefing takes the stage: the surrounding chrome gives way to it. */
+.workspace.cinema {
+  grid-template-columns: minmax(210px, 0.62fr) minmax(560px, 3fr);
+}
+.workspace.cinema .col-sys { display: none; }
+.stage-graph.bare { border: none; background: none; backdrop-filter: none; }
+.stage-graph.bare::before { display: none; }

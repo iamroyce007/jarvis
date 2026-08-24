@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { resolveClaudeBinary, enrichedPath } from '../claude/resolve.js'
 import { db } from '../store/db.js'
 import { log } from '../log.js'
+import { resolveFromWeb } from './webmedia.js'
 import type { Confidence } from '../store/graph.js'
 
 const execFileAsync = promisify(execFile)
@@ -70,6 +71,46 @@ export interface BriefingTimelineItem {
   sources: number[]
 }
 
+/**
+ * A storyboard frame.
+ *
+ * `kind` is chosen by the model, not by the UI: this is the "story director"
+ * decision — given what it is explaining, how should it be shown? A person
+ * becomes a portrait, a disagreement becomes a conflict frame, a sequence
+ * becomes a timeline. The renderer just honours that choice.
+ */
+export type FrameKind =
+  | 'hero' | 'portrait' | 'evidence' | 'timeline' | 'conflict'
+  | 'quote' | 'stat' | 'place' | 'conclusion'
+
+export interface BriefingFrame {
+  kind: FrameKind
+  title: string
+  /** What JARVIS says while this frame is on screen. */
+  narration: string
+  /** Subject to resolve a real photograph for (person, event, place). */
+  subject?: string
+  /** Role/context line, used by portrait frames. */
+  role?: string
+  confidence: Confidence
+  sources: number[]
+  /** conflict frames: the competing accounts, each with its source. */
+  sides?: { claim: string; source: number }[]
+  /** stat frames: the number and what it measures. */
+  value?: string
+  unit?: string
+  /** quote frames. */
+  quote?: string
+  attribution?: string
+  /** Resolved at build time from Wikimedia; never invented. */
+  media?: {
+    image: string | null
+    credit: string | null
+    sourceUrl: string | null
+    description: string | null
+  }
+}
+
 export interface Briefing {
   id: string
   subject: string
@@ -84,42 +125,71 @@ export interface Briefing {
   claims: BriefingClaim[]
   sources: BriefingSource[]
   openQuestions: string[]
+  /** The storyboard: how JARVIS chose to present this. */
+  frames: BriefingFrame[]
+  /** Hero image for the whole briefing, resolved from Wikimedia. */
+  hero?: {
+    image: string | null
+    credit: string | null
+    sourceUrl: string | null
+    description: string | null
+  }
   /** Set when the model could not research the subject at all. */
   failure?: string
 }
 
-const RESEARCH_PROMPT = `You are an intelligence analyst producing a briefing.
+const RESEARCH_PROMPT = `You are an intelligence analyst AND a visual director.
 
-Use web search to research the SUBJECT below. Base the briefing on what you
-actually find. Then return ONLY minified JSON — no prose, no code fence:
+Use web search to research the SUBJECT below. Then decide how the answer should
+be SHOWN, not merely written, and return a storyboard.
+
+Return ONLY minified JSON — no prose, no code fence:
 
 {"headline":"","summary":"","kind":"person|event|organization|company|technology|place|concept",
- "sections":[{"title":"","body":"","confidence":"","sources":[0]}],
+ "frames":[{"kind":"","title":"","narration":"","subject":"","role":"","confidence":"","sources":[0],
+            "sides":[{"claim":"","source":0}],"value":"","unit":"","quote":"","attribution":""}],
  "timeline":[{"date":"","label":"","detail":"","confidence":"","sources":[0]}],
  "entities":[{"name":"","kind":"","role":""}],
  "claims":[{"statement":"","confidence":"","sources":[0]}],
  "sources":[{"title":"","url":"","domain":"","publisher":"","date":""}],
  "openQuestions":[""]}
 
+FRAME KINDS — choose the one that best shows each point:
+  hero       opening. The subject itself. Set "subject" to the exact name to
+             illustrate (a person, event or place).
+  portrait   a person who matters here. "subject" = their name, "role" = who
+             they are and why they appear in this story.
+  place      a location that matters. "subject" = the place name.
+  evidence   what the sources actually report. Cite them in "sources".
+  timeline   how it unfolded. The timeline array carries the detail.
+  conflict   sources disagree. Fill "sides" with the competing accounts, each
+             pointing at the source that made it. Never silently pick a winner.
+  quote      a direct quotation that carries weight. Set "quote" + "attribution".
+  stat       a single number that matters. Set "value" + "unit".
+  conclusion what is established, and what is not.
+
+STORYBOARD RULES:
+- 5 to 9 frames. Order them as a story: open, establish, evidence, complication,
+  resolution. The first frame should always be "hero".
+- Always end with a "conclusion" frame.
+- Include a "conflict" frame whenever sources genuinely disagree. This is
+  required, not optional — silently choosing one account is a failure.
+- "subject" must be a real, searchable proper name so a photograph can be found.
+  Leave it empty if no specific person/place/event is being shown.
+- narration is what JARVIS says aloud for that frame: one or two spoken
+  sentences, plain conversational English, no markdown.
+
 confidence MUST be one of: confirmed, corroborated, reported, inferred, disputed, unknown
 
-Non-negotiable rules:
+NON-NEGOTIABLE:
 - NEVER invent a source. Every entry in "sources" must be a real URL you
-  actually retrieved during this search. If you cannot find sources, return an
-  empty sources array and mark everything "unknown".
-- "sources" indices in sections/claims/timeline refer to positions in the
-  sources array, starting at 0.
+  actually retrieved. If you found nothing, return an empty sources array and
+  mark everything "unknown".
 - "confirmed" requires multiple independent reliable sources agreeing.
-  "corroborated" = two sources. "reported" = a single source. "disputed" =
-  sources disagree — say so explicitly in the body. "inferred" = your own
-  reasoning, not stated by any source.
-- Distinguish established fact from allegation and from claim. For contested or
-  legally sensitive matters use neutral language and attribute: "X was reported
-  by Y to have...", never "X did...".
-- openQuestions should name what remains genuinely unresolved or unverified.
-- 4 to 7 sections. Prefer specific, dated, attributable detail over generalities.
-- If the subject is ambiguous, brief the most likely reading and say so in the
-  summary.`
+  "corroborated" = two. "reported" = one. "inferred" = your own reasoning.
+- For contested or legally sensitive matters, attribute rather than assert:
+  "X was reported by Y to have...", never "X did...".
+- openQuestions must name what genuinely remains unresolved.`
 
 /** Extracts JSON from a response that may be fenced or prefixed with prose. */
 function parseJson<T>(raw: string): T | null {
@@ -216,7 +286,8 @@ export async function research(
     entities: [],
     claims: [],
     sources: [],
-    openQuestions: []
+    openQuestions: [],
+    frames: []
   }
 
   if (inFlight) return { ...base, failure: 'Another briefing is already running.' }
@@ -327,7 +398,74 @@ export async function research(
           sources: idxs(o.sources)
         }
       }),
-      openQuestions: (Array.isArray(parsed.openQuestions) ? parsed.openQuestions : []).map(String)
+      openQuestions: (Array.isArray(parsed.openQuestions) ? parsed.openQuestions : []).map(String),
+      frames: []
+    }
+
+    // ---- storyboard ------------------------------------------------------
+    const FRAME_KINDS: FrameKind[] = [
+      'hero', 'portrait', 'evidence', 'timeline', 'conflict',
+      'quote', 'stat', 'place', 'conclusion'
+    ]
+    const rawFrames = Array.isArray(parsed.frames) ? parsed.frames : []
+    const frames: BriefingFrame[] = rawFrames.map((x) => {
+      const o = x as Record<string, unknown>
+      const kind = (FRAME_KINDS.includes(o.kind as FrameKind) ? o.kind : 'evidence') as FrameKind
+      return {
+        kind,
+        title: String(o.title ?? ''),
+        narration: String(o.narration ?? ''),
+        subject: o.subject ? String(o.subject) : undefined,
+        role: o.role ? String(o.role) : undefined,
+        confidence: coerceConfidence(o.confidence),
+        sources: idxs(o.sources),
+        sides: Array.isArray(o.sides)
+          ? (o.sides as Record<string, unknown>[]).map((sd) => ({
+              claim: String(sd.claim ?? ''),
+              source: Number(sd.source ?? 0)
+            }))
+          : undefined,
+        value: o.value ? String(o.value) : undefined,
+        unit: o.unit ? String(o.unit) : undefined,
+        quote: o.quote ? String(o.quote) : undefined,
+        attribution: o.attribution ? String(o.attribution) : undefined
+      }
+    })
+
+    progress('Finding imagery')
+    // Photographs come from the open web: each frame's subject is searched,
+    // the resulting pages are opened, and the imagery they publish is used with
+    // the publisher credited. A frame whose subject yields nothing simply
+    // renders without a picture rather than showing a placeholder.
+    const wanted = [subject, ...frames.map((f) => f.subject).filter((x): x is string => !!x)]
+    const unique = [...new Set(wanted)].slice(0, 6)
+    const resolved = Object.fromEntries(
+      await Promise.all(
+        unique.map(async (sub) => [sub, await resolveFromWeb(sub, { cwd: opts.cwd })] as const)
+      )
+    )
+
+    for (const f of frames) {
+      const w = f.subject ? resolved[f.subject] : undefined
+      if (w?.hero) {
+        f.media = {
+          image: w.hero.url,
+          credit: w.hero.publisher,
+          sourceUrl: w.hero.pageUrl,
+          description: w.description
+        }
+      }
+    }
+
+    briefing.frames = frames
+    const heroWeb = resolved[subject]
+    if (heroWeb?.hero) {
+      briefing.hero = {
+        image: heroWeb.hero.url,
+        credit: heroWeb.hero.publisher,
+        sourceUrl: heroWeb.hero.pageUrl,
+        description: heroWeb.description
+      }
     }
 
     db.prepare(
@@ -335,8 +473,9 @@ export async function research(
     ).run(briefing.id, subject, briefing.kind, briefing.at, JSON.stringify(briefing), briefing.ms)
 
     const live = verified.filter((s) => s.reachable).length
+    const withImages = briefing.frames.filter((f) => f.media?.image).length
     log(
-      `briefing "${subject}": ${briefing.sections.length} sections, ` +
+      `briefing "${subject}": ${briefing.frames.length} frames (${withImages} with imagery), ` +
         `${verified.length} sources (${live} verified) in ${briefing.ms}ms`
     )
     return briefing

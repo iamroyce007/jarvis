@@ -215,9 +215,16 @@ final class Listener {
     var contextualStrings: [String] = []
 
     // VAD tuning. Frames arrive at roughly 10-20ms depending on buffer size.
-    private var threshold: Float = 0.012
+    /// Minimum RMS to count as speech.
+    ///
+    /// Raised from 0.012: an open-plan room and an always-hot Bluetooth mic
+    /// pushed background chatter over the old gate, and the recogniser dutifully
+    /// turned that noise into words ("ki Naki"), which then became real turns.
+    private var threshold: Float = 0.030
     private var silenceFramesToEnd = 45
-    private var voiceFramesToStart = 3
+    /// Consecutive loud frames before speech is declared. A short burst of
+    /// noise now dies here instead of opening an utterance.
+    private var voiceFramesToStart = 6
     private var noiseFloor: Float = 0.004
 
     private func name(_ s: SFSpeechRecognizerAuthorizationStatus) -> String {
@@ -401,7 +408,9 @@ final class Listener {
 
         emit(["type": "level", "rms": rms])
 
-        let gate = max(threshold, noiseFloor * 3.0)
+        // A wider margin over the ambient floor: 3x let steady room noise
+        // through whenever the floor settled low.
+        let gate = max(threshold, noiseFloor * 4.5)
 
         // Endpoint on the transcript, not on loudness. A noisy Bluetooth mic
         // keeps RMS above the gate long after the speaker has stopped, which
@@ -479,8 +488,23 @@ final class Listener {
                 // The final payload is sometimes empty even when partials were
                 // good, so fall back to the best partial we saw.
                 let final = text.isEmpty ? lastPartial : text
+
+                // Per-segment confidence, averaged over the utterance. A low
+                // score means the recogniser guessed, and a guessed command
+                // must never be executed silently — the caller asks first.
+                let segments = result.bestTranscription.segments
+                let scored = segments.filter { $0.confidence > 0 }
+                let confidence: Double = scored.isEmpty
+                    ? 0
+                    : Double(scored.map { $0.confidence }.reduce(0, +)) / Double(scored.count)
+
                 lastPartial = ""
-                emit(["type": "stt_final", "text": final])
+                emit([
+                    "type": "stt_final",
+                    "text": final,
+                    "confidence": confidence,
+                    "segments": segments.count
+                ])
                 // A finished task never yields more text. Recognition must be
                 // rearmed here, or JARVIS goes permanently deaf while still
                 // reporting speech activity from the VAD.

@@ -49,6 +49,9 @@ import {
 } from './store/graph.js'
 import { extractFromExchange } from './intelligence/extract.js'
 import { research, recentBriefings, getBriefing, isBriefingRunning } from './intelligence/briefing.js'
+import { showMeSubject, spotlight } from './intelligence/spotlight.js'
+import { routeIntent, needsResearch, type ViewIntent } from './intelligence/intent.js'
+import { project, isProjecting } from './intelligence/scenarios.js'
 import { setSessionTools, setNativeAvailability, toolRegistry } from './intelligence/tools.js'
 import {
   recordTurn,
@@ -279,15 +282,72 @@ function wireEvents(): void {
 
   // Research intent starts a briefing in parallel with the spoken answer, so
   // JARVIS replies immediately while the visual briefing assembles behind it.
+  // ------------------------------------------------------------------ router
+  // "Tony asks, JARVIS shows": the view is chosen from the meaning of the
+  // question, not from a mode the user has to pick. Everything runs alongside
+  // the spoken answer so speech is never blocked by assembly.
   orchestrator.on('request', (text) => {
-    const subject = researchSubject(text)
-    if (!subject || isBriefingRunning()) return
-    log('briefing triggered:', subject)
-    send('brief-progress', { subject, stage: 'Searching' })
-    void research(subject, {
-      cwd: workspaceRoot,
-      onProgress: (stage) => send('brief-progress', { subject, stage })
-    }).then((b) => send('brief-done', b))
+    const intent = routeIntent(text)
+    if (intent.view === 'none' || !intent.subject) return
+
+    log(
+      `intent: ${intent.view} · "${intent.subject}"` +
+        (intent.inherited ? ' (inherited from context)' : '')
+    )
+    send('intent', intent)
+
+    const subject = intent.subject
+    const progress = (stage: string): void => send('brief-progress', { subject, stage })
+
+    switch (intent.view) {
+      // Media straight onto the stage.
+      case 'spotlight':
+      case 'portrait':
+        progress('Searching the web')
+        void spotlight(subject, { cwd: workspaceRoot, onProgress: progress }).then((s) =>
+          send('spotlight', s)
+        )
+        // A named person also deserves the full profile behind the portrait.
+        if (intent.view === 'portrait' && !isBriefingRunning()) {
+          void research(subject, { cwd: workspaceRoot, onProgress: progress }).then((b) =>
+            send('brief-done', b)
+          )
+        }
+        break
+
+      // Possible futures.
+      case 'scenario':
+        if (isProjecting()) break
+        progress('Projecting')
+        void project(subject, { cwd: workspaceRoot, onProgress: progress }).then((p) =>
+          send('projection', p)
+        )
+        break
+
+      // What the graph has learned since.
+      case 'changes':
+        send('changes', changesSince(24 * 60 * 60 * 1000))
+        break
+
+      // Views that read from the briefing already on screen.
+      case 'evidence':
+      case 'timeline':
+      case 'map':
+        send('focus-view', { view: intent.view, subject })
+        break
+
+      // Full research passes.
+      case 'event':
+      case 'briefing':
+      case 'presentation':
+        if (isBriefingRunning()) break
+        progress('Searching')
+        void research(subject, { cwd: workspaceRoot, onProgress: progress }).then((b) => {
+          send('brief-done', b)
+          if (intent.view === 'presentation') send('present', true)
+        })
+        break
+    }
   })
 
   orchestrator.on('activity', (a) => send('activity', a))
@@ -658,6 +718,24 @@ function registerIpc(): void {
   ipcMain.handle('voice:open-settings', (_e, pane: 'SpeechRecognition' | 'Microphone' | 'Dictation') =>
     openPrivacySettings(pane)
   )
+  ipcMain.handle('project', async (_e, subject: string) => {
+    const p = await project(subject, {
+      cwd: workspaceRoot,
+      onProgress: (stage) => send('brief-progress', { subject, stage })
+    })
+    send('projection', p)
+    return p
+  })
+
+  ipcMain.handle('spotlight', async (_e, subject: string) => {
+    const s = await spotlight(subject, {
+      cwd: workspaceRoot,
+      onProgress: (stage) => send('brief-progress', { subject, stage })
+    })
+    send('spotlight', s)
+    return s
+  })
+
   ipcMain.handle('brief:research', async (_e, subject: string) => {
     const b = await research(subject, {
       cwd: workspaceRoot,

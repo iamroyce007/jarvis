@@ -254,6 +254,33 @@ export interface BriefingTimelineItem {
   sources: number[]
 }
 
+export type FrameKind =
+  | 'hero' | 'portrait' | 'evidence' | 'timeline' | 'conflict'
+  | 'quote' | 'stat' | 'place' | 'conclusion'
+
+export interface FrameMedia {
+  image: string | null
+  credit: string | null
+  sourceUrl: string | null
+  description: string | null
+}
+
+export interface BriefingFrame {
+  kind: FrameKind
+  title: string
+  narration: string
+  subject?: string
+  role?: string
+  confidence: Confidence
+  sources: number[]
+  sides?: { claim: string; source: number }[]
+  value?: string
+  unit?: string
+  quote?: string
+  attribution?: string
+  media?: FrameMedia
+}
+
 export interface Briefing {
   id: string
   subject: string
@@ -268,5 +295,66 @@ export interface Briefing {
   claims: BriefingClaim[]
   sources: BriefingSource[]
   openQuestions: string[]
+  frames: BriefingFrame[]
+  hero?: FrameMedia
   failure?: string
+}
+
+export interface WebImage {
+  url: string
+  pageUrl: string
+  publisher: string
+  title: string | null
+  declaredWidth: number | null
+  reachable: boolean
+}
+
+export interface Spotlight {
+  subject: string
+  title: string | null
+  image: string | null
+  description: string | null
+  extract: string | null
+  credit: string | null
+  sourceUrl: string | null
+  confidence: Confidence
+  gallery: WebImage[]
+  pages: { url: string; publisher: string; title: string }[]
+  failure?: string
+}
+
+// ------------------------------------------------------------- projections
+
+export type Likelihood = 'most likely' | 'plausible' | 'possible' | 'unlikely'
+
+export interface Scenario {
+  title: string
+  outline: string
+  likelihood: Likelihood
+  assumptions: string[]
+  triggers: string[]
+  consequences: string[]
+  falsifiers: string[]
+}
+
+export interface Projection {
+  id: string
+  subject: string
+  at: number
+  currentState: string
+  observations: string[]
+  scenarios: Scenario[]
+  keyVariables: string[]
+  failure?: string
+}
+
+export interface GraphChanges {
+  newEntities: GraphEntity[]
+  newRelations: (GraphRelation & { sourceName: string; targetName: string })[]
+}
+
+export interface IntentInfo {
+  view: string
+  subject: string | null
+  inherited: boolean
 }

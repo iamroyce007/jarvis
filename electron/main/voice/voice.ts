@@ -10,7 +10,7 @@ type Events = {
   ready: []
   auth: [{ ok: boolean; status: string }]
   partial: [string]
-  final: [string]
+  final: [string, number]
   speechStart: []
   speechEnd: []
   level: [number]
@@ -126,7 +126,7 @@ export class VoiceController extends EventEmitter {
         this.emit('partial', String(m.text ?? ''))
         break
       case 'stt_final':
-        this.emit('final', String(m.text ?? ''))
+        this.emit('final', String(m.text ?? ''), Number(m.confidence) || 0)
         break
       case 'listening':
         this.listening = m.value === true

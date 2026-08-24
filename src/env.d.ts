@@ -11,7 +11,11 @@ import type {
   ToolSpec,
   HaltResult,
   Capabilities,
-  Briefing
+  Briefing,
+  Spotlight,
+  Projection,
+  GraphChanges,
+  IntentInfo
 } from '../shared/types'
 
 interface HistoryTurn {
@@ -38,6 +42,14 @@ declare global {
       openVoiceSettings(pane: 'SpeechRecognition' | 'Microphone' | 'Dictation'): Promise<void>
       newSession(): Promise<SessionInfo>
       setPersonality(p: string): Promise<SessionInfo>
+      onIntent(cb: (i: IntentInfo) => void): () => void
+      onProjection(cb: (p: Projection) => void): () => void
+      onChanges(cb: (c: GraphChanges) => void): () => void
+      onFocusView(cb: (v: { view: string; subject: string }) => void): () => void
+      onPresent(cb: (v: boolean) => void): () => void
+      project(subject: string): Promise<Projection>
+      spotlight(subject: string): Promise<Spotlight>
+      onSpotlight(cb: (s: Spotlight) => void): () => void
       research(subject: string): Promise<Briefing>
       recentBriefings(limit?: number): Promise<{ id: string; subject: string; kind: string; at: number }[]>
       getBriefing(id: string): Promise<Briefing | null>

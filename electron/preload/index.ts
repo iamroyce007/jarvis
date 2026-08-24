@@ -21,6 +21,18 @@ const api = {
   setPersonality: (p: string): Promise<SessionInfo> =>
     ipcRenderer.invoke('claude:set-personality', p),
 
+  // Spotlight — "show me"
+  spotlight: (subject: string) => ipcRenderer.invoke('spotlight', subject),
+  onSpotlight: (cb: (s: unknown) => void) => sub('spotlight', cb),
+
+  // Intent routing — the view follows the question
+  onIntent: (cb: (i: unknown) => void) => sub('intent', cb),
+  onProjection: (cb: (p: unknown) => void) => sub('projection', cb),
+  onChanges: (cb: (c: unknown) => void) => sub('changes', cb),
+  onFocusView: (cb: (v: unknown) => void) => sub('focus-view', cb),
+  onPresent: (cb: (v: boolean) => void) => sub('present', cb),
+  project: (subject: string) => ipcRenderer.invoke('project', subject),
+
   // Briefings
   research: (subject: string) => ipcRenderer.invoke('brief:research', subject),
   recentBriefings: (limit?: number) => ipcRenderer.invoke('brief:recent', limit),
