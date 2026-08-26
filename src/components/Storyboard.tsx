@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Briefing, BriefingFrame, BriefingSource } from '../../shared/types'
+import { ArticleEvidenceCard, SourceStrip as SourceStripNew } from './EvidenceCard'
 
 /**
  * The storyboard: JARVIS assembling an answer visually.
@@ -358,42 +359,11 @@ function FrameBody({
 
 function SourceStrip({ sources }: { sources: BriefingSource[] }) {
   if (sources.length === 0) return null
-  return (
-    <div className="f-strip">
-      {sources.map((s) => (
-        <a key={s.id} className="f-strip-item" href={s.url} target="_blank" rel="noreferrer">
-          <span className={`sb-dot ${s.reachable ? 'ok' : 'bad'}`} />
-          {s.publisher || s.domain}
-        </a>
-      ))}
-    </div>
-  )
+  return <SourceStripNew sources={sources} />
 }
 
-/** An evidence card: the publication's own preview, plus verification state. */
 function SourceCard({ source }: { source: BriefingSource }) {
-  const [broken, setBroken] = useState(false)
-  return (
-    <a className="ev-card" href={source.url} target="_blank" rel="noreferrer" title={source.url}>
-      <div className="ev-img">
-        {source.image && !broken ? (
-          <img src={source.image} alt="" loading="lazy" onError={() => setBroken(true)} />
-        ) : (
-          <div className="ev-fallback">{source.domain.slice(0, 2).toUpperCase()}</div>
-        )}
-        <span className={`ev-badge ${source.reachable ? 'ok' : 'bad'}`}>
-          {source.reachable ? 'VERIFIED' : 'UNVERIFIED'}
-        </span>
-      </div>
-      <div className="ev-meta">
-        <div className="ev-title">{source.title}</div>
-        <div className="ev-sub">
-          {source.publisher || source.domain}
-          {source.date ? ` · ${source.date}` : ''}
-        </div>
-      </div>
-    </a>
-  )
+  return <ArticleEvidenceCard source={source} size="compact" />
 }
 
 /**

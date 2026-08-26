@@ -14,9 +14,10 @@ interface Props {
   story: Explanation
   onClose: () => void
   onInvestigate: (subject: string) => void
+  onPresent?: () => void
 }
 
-export function StoryView({ story, onClose, onInvestigate }: Props) {
+export function StoryView({ story, onClose, onInvestigate, onPresent }: Props) {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(true)
   const [showSources, setShowSources] = useState(false)
@@ -94,6 +95,9 @@ export function StoryView({ story, onClose, onInvestigate }: Props) {
           <span className="st-headline">{story.headline}</span>
         </div>
         <div className="st-top-right">
+          {onPresent ? (
+            <button className="bar-btn" onClick={onPresent}>Present</button>
+          ) : null}
           {story.sources.length ? (
             <button className="bar-btn" onClick={() => setShowSources((s) => !s)}>
               {story.sources.length} sources

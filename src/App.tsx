@@ -4,6 +4,7 @@ import { Storyboard } from './components/Storyboard'
 import { ScenarioView } from './components/ScenarioView'
 import { SpotlightView } from './components/SpotlightView'
 import { StoryView } from './components/StoryView'
+import { PresentationMode } from './components/PresentationMode'
 import type {
   JarvisState,
   TranscriptEntry,
@@ -67,6 +68,7 @@ export default function App() {
   const [stage, setStage] = useState<Stage>({ kind: 'rest' })
   const [steps, setSteps] = useState<ActivityStep[]>([])
   const [diagnostics, setDiagnostics] = useState(false)
+  const [presenting, setPresenting] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinned = useRef(false)
@@ -213,11 +215,22 @@ export default function App() {
             onBrief={(s) => void window.jarvis.research(s)}
           />
         ) : stage.kind === 'story' ? (
-          <StoryView
-            story={stage.data}
-            onClose={() => setStage({ kind: 'rest' })}
-            onInvestigate={(s) => void window.jarvis.explain(s)}
-          />
+          <>
+            {presenting ? (
+              <PresentationMode
+                story={stage.data}
+                onClose={() => setPresenting(false)}
+                onInvestigate={(s) => void window.jarvis.explain(s)}
+              />
+            ) : (
+              <StoryView
+                story={stage.data}
+                onClose={() => setStage({ kind: 'rest' })}
+                onInvestigate={(s) => void window.jarvis.explain(s)}
+                onPresent={() => setPresenting(true)}
+              />
+            )}
+          </>
         ) : stage.kind === 'briefing' ? (
           <Storyboard
             briefing={stage.data}
@@ -241,6 +254,14 @@ export default function App() {
             </span>
           ))}
         </div>
+
+        {/* Voice state indicator */}
+        {(state === 'LISTENING' || state === 'UNDERSTANDING' || state === 'THINKING' || state === 'EXECUTING') ? (
+          <div className="voice-state">
+            <span className="voice-state-dot" />
+            <span className="voice-state-label">{STATE_CAPTION[state]}</span>
+          </div>
+        ) : null}
 
         {notice ? (
           <div className="talk-notice" onClick={() => setNotice(null)}>{notice}</div>

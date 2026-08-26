@@ -1,12 +1,11 @@
 @import './design.css';
 
 /*
- * The environment.
+ * JARVIS — The Cinematic Environment
  *
- * Three bands: a hairline of chrome, the stage, and a quiet strip of speech.
- * There are no panels, no sidebars and no persistent readouts — whatever is
- * being explained owns the screen, and everything else is either absent or
- * one keystroke away.
+ * The entire screen is an immersive intelligence workspace.
+ * No dashboard. No sidebars. No chrome competing with the stage.
+ * Information takes the whole screen, and everything else recedes.
  */
 
 * { box-sizing: border-box; }
@@ -21,244 +20,321 @@ body {
   user-select: none;
 }
 
-/* A single slow field of light. It recedes further once something is on stage. */
+/* Ambient field — a single slow breath of light behind everything */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse 70% 55% at 50% 40%, rgba(38, 96, 130, 0.16), transparent 72%);
+  background: radial-gradient(ellipse 60% 50% at 50% 42%, rgba(30, 80, 120, 0.10), transparent 70%);
   transition: opacity var(--slow) var(--ease);
 }
-.app.showing ~ * body::before { opacity: 0.3; }
+.app.showing body::before { opacity: 0.2; }
 
 .app {
   height: 100%;
   display: grid;
-  grid-template-rows: 38px 1fr auto;
+  grid-template-rows: 36px 1fr auto;
   position: relative;
   z-index: 1;
 }
 
-/* ------------------------------------------------------------------- chrome */
+/* ══════════════════════════════════════════════════════════════ TOP BAR */
+/* Nearly invisible — a whisper of status, not a header */
 .bar {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 0 14px 0 82px;
   -webkit-app-region: drag;
+  z-index: var(--z-top);
 }
 .mark {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--state-color, var(--cyan-dim));
-  box-shadow: 0 0 10px var(--state-color, var(--cyan));
+  box-shadow: 0 0 12px var(--state-glow, var(--cyan-glow));
   transition: background var(--smooth), box-shadow var(--smooth);
 }
 .bar-state {
-  font-size: 9px;
-  letter-spacing: 0.2em;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--state-color, var(--ink-faint));
+  color: var(--state-color, var(--ink-ghost));
   flex: 1;
+  transition: color var(--smooth);
 }
 .bar-intent {
-  font-size: 8.5px;
-  letter-spacing: 0.16em;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--cyan);
+  color: var(--cyan-dim);
 }
 .bar-right { display: flex; gap: 8px; -webkit-app-region: no-drag; }
 .bar-btn {
   background: none;
   border: none;
   color: var(--ink-ghost);
-  font-size: 9px;
-  letter-spacing: 0.16em;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: var(--r-sm);
-  transition: color var(--quick);
-  font-family: inherit;
+  border-radius: var(--r-xs);
+  transition: color var(--quick), background var(--quick);
 }
-.bar-btn:hover { color: var(--ink); }
+.bar-btn:hover { color: var(--ink-soft); background: rgba(100, 180, 255, 0.05); }
 .bar-btn.stop:hover { color: var(--danger); }
 
-/* -------------------------------------------------------------------- stage */
+/* ══════════════════════════════════════════════════════════════ STAGE */
 .stage-area {
   position: relative;
   min-height: 0;
   overflow: hidden;
   display: flex;
-  animation: stageIn var(--smooth) var(--ease) both;
+  animation: fadeIn var(--smooth) var(--ease) both;
 }
 .stage-area > * { flex: 1; min-width: 0; }
-@keyframes stageIn { from { opacity: 0; } to { opacity: 1; } }
 
-/* At rest: the core alone in the dark. */
+/* ══════════════════════════════════════════════════════ REST STATE */
+/* The core alone in the dark — a single point of intelligence waiting */
 .rest {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 22px;
+  gap: 24px;
   width: 100%;
 }
 .rest-hint {
-  font-size: 11px;
-  letter-spacing: 0.16em;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 300;
+  letter-spacing: 0.2em;
   color: var(--ink-ghost);
   text-transform: uppercase;
 }
 
-/* Assembling: the work is visible, the readouts are not. */
+/* ══════════════════════════════════════════════════ ASSEMBLING STATE */
+/* JARVIS is researching — the core shrinks and activity materializes */
 .assembling {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 12px;
+  gap: 14px;
   width: 100%;
   text-align: center;
 }
 .assembling-subject {
-  font-size: clamp(20px, 2.6vw, 30px);
-  color: #fff;
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3vw, 34px);
+  font-weight: 400;
+  color: var(--white);
   letter-spacing: -0.02em;
-  margin-top: 6px;
+  margin-top: 8px;
+  animation: slideUp var(--smooth) var(--ease) both;
 }
 .assembling-stage {
-  font-size: 9.5px;
-  letter-spacing: 0.24em;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--cyan);
-  animation: breathe 1.8s var(--ease-in-out) infinite;
+  animation: breathe 2s var(--ease-in-out) infinite;
 }
-.assembling-steps { margin-top: 10px; display: grid; gap: 3px; }
-.assembling-step { font-size: 10px; color: var(--ink-ghost); }
+.assembling-steps {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.assembling-step {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--ink-ghost);
+  animation: slideUp var(--smooth) var(--ease) both;
+}
 
-@keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
-
-/* ---------------------------------------------------------------- spotlight */
+/* ══════════════════════════════════════════════════════ SPOTLIGHT */
 .sp {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-  gap: 36px;
+  gap: 40px;
   align-items: center;
-  padding: 10px 40px 20px;
+  padding: 12px 44px 24px;
   width: 100%;
   overflow-y: auto;
 }
-.sp-photo { margin: 0; animation: photoIn var(--slow) var(--ease) both; }
-@keyframes photoIn {
-  from { opacity: 0; transform: scale(1.03); }
-  to { opacity: 1; transform: none; }
+.sp-photo {
+  margin: 0;
+  animation: materialize var(--slow) var(--ease) both;
 }
 .sp-photo img {
   width: 100%;
   max-height: 72vh;
   object-fit: contain;
-  border-radius: var(--r-md);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
+  border-radius: var(--r-lg);
+  border: var(--hair) solid var(--glass-edge);
+  box-shadow: var(--shadow-xl);
 }
 .sp-photo figcaption {
-  font-size: 9px;
+  font-family: var(--mono);
+  font-size: 8.5px;
   color: var(--ink-ghost);
-  margin-top: 9px;
+  margin-top: 10px;
   letter-spacing: 0.04em;
 }
-.sp-photo figcaption a { color: var(--cyan-dim); text-decoration: none; }
+.sp-photo figcaption a {
+  color: var(--cyan-dim);
+  text-decoration: none;
+}
 .sp-photo figcaption a:hover { color: var(--cyan); }
 
 .sp-name {
-  font-size: clamp(26px, 3.4vw, 42px);
-  line-height: 1.08;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 3.6vw, 48px);
+  line-height: 1.06;
   letter-spacing: -0.03em;
-  color: #fff;
+  color: var(--white);
   margin: 0;
   font-weight: 600;
+  animation: slideUp var(--smooth) var(--ease) 100ms both;
 }
-.sp-role { font-size: 13px; color: var(--cyan); margin-top: 8px; }
-.sp-text {
+.sp-role {
   font-size: 13px;
+  color: var(--cyan);
+  margin-top: 10px;
+  animation: slideUp var(--smooth) var(--ease) 150ms both;
+}
+.sp-text {
+  font-size: 13.5px;
   line-height: 1.65;
   color: var(--ink-soft);
-  margin: 16px 0 0;
-  max-width: 46ch;
+  margin: 18px 0 0;
+  max-width: 48ch;
   user-select: text;
+  animation: slideUp var(--smooth) var(--ease) 200ms both;
 }
-.sp-actions { display: flex; gap: 8px; margin-top: 22px; }
+.sp-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+  animation: slideUp var(--smooth) var(--ease) 250ms both;
+}
 
-.sp-strip { display: flex; gap: 8px; margin-top: 24px; overflow-x: auto; scrollbar-width: none; }
+.sp-strip {
+  display: flex;
+  gap: 10px;
+  margin-top: 28px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  animation: slideUp var(--smooth) var(--ease) 300ms both;
+}
 .sp-strip::-webkit-scrollbar { display: none; }
 .sp-thumb {
   position: relative;
   flex-shrink: 0;
-  width: 92px;
+  width: 96px;
   aspect-ratio: 4 / 3;
   border-radius: var(--r-sm);
   overflow: hidden;
-  opacity: 0.55;
-  transition: opacity var(--quick), transform var(--quick);
+  border: var(--hair) solid var(--glass-edge);
+  opacity: 0.5;
+  transition: opacity var(--quick), transform var(--quick), border-color var(--quick);
 }
-.sp-thumb:hover { opacity: 1; transform: translateY(-2px); }
+.sp-thumb:hover {
+  opacity: 1;
+  transform: translateY(-3px);
+  border-color: var(--glass-edge-strong);
+}
 .sp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .sp-thumb span {
   position: absolute;
   inset: auto 0 0 0;
-  font-size: 7.5px;
   font-family: var(--mono);
+  font-size: 7px;
   color: var(--ink-soft);
-  background: linear-gradient(transparent, rgba(4, 7, 12, 0.9));
-  padding: 8px 4px 3px;
+  background: linear-gradient(transparent, rgba(2, 5, 9, 0.92));
+  padding: 10px 5px 3px;
 }
 
 .sp-empty {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   text-align: center;
   padding: 30px;
 }
-.sp-empty-title { font-size: 15px; color: var(--ink); }
-.sp-empty-why { font-size: 11.5px; color: var(--warn); max-width: 46ch; line-height: 1.55; }
+.sp-empty-title { font-size: 16px; color: var(--ink); font-weight: 500; }
+.sp-empty-why { font-size: 11px; color: var(--warn); max-width: 46ch; line-height: 1.6; }
 
-/* --------------------------------------------------------------------- talk */
+/* ══════════════════════════════════════════════════════ TALK STRIP */
+/* A quiet transparent layer at the bottom, not a chat window */
 .talk {
-  padding: 8px 40px 14px;
+  padding: 6px 44px 14px;
   display: grid;
-  gap: 6px;
+  gap: 5px;
+  position: relative;
+  z-index: var(--z-content);
 }
 .talk-stream {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-height: 108px;
+  gap: 2px;
+  max-height: 100px;
   overflow-y: auto;
   scrollbar-width: none;
-  mask-image: linear-gradient(transparent, #000 24px);
+  mask-image: linear-gradient(transparent, #000 20px);
 }
 .talk-stream::-webkit-scrollbar { display: none; }
 
-/* Speech as a transcript line, not a chat bubble. */
 .said {
   font-size: 12.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   user-select: text;
 }
 .said.user { color: var(--ink-faint); }
 .said.jarvis { color: var(--ink); }
-.said.partial { opacity: 0.45; font-style: italic; }
+.said.partial { opacity: 0.4; font-style: italic; }
 
 .talk-notice {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--warn);
   cursor: pointer;
-  line-height: 1.45;
+  line-height: 1.5;
+  padding: 4px 0;
 }
 
+/* Voice state indicator */
+.voice-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.voice-state-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--state-color);
+  animation: pulse 1.5s var(--ease-in-out) infinite;
+}
+.voice-state-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--state-color);
+}
+
+.talk-input {
+  position: relative;
+}
 .talk-input input {
   width: 100%;
   background: none;
@@ -266,23 +342,22 @@ body::before {
   border-bottom: var(--hair) solid var(--glass-edge);
   outline: none;
   color: var(--ink);
+  font-family: var(--font);
   font-size: 13px;
-  font-family: inherit;
-  padding: 6px 0;
+  padding: 7px 0;
   user-select: text;
   transition: border-color var(--quick);
 }
-.talk-input input:focus { border-bottom-color: var(--cyan); }
-.talk-input input::placeholder { color: var(--ink-ghost); }
+.talk-input input:focus { border-bottom-color: var(--cyan-dim); }
+.talk-input input::placeholder { color: var(--ink-void); }
 
-/* -------------------------------------------------------------- diagnostics */
-/* Deliberately hidden behind ⌘I: this is about JARVIS, not about the answer. */
+/* ══════════════════════════════════════════════════ DIAGNOSTICS */
 .diag {
   position: absolute;
   inset: 0;
-  z-index: 80;
-  background: rgba(4, 7, 12, 0.86);
-  backdrop-filter: blur(18px);
+  z-index: var(--z-top);
+  background: rgba(2, 5, 9, 0.88);
+  backdrop-filter: blur(20px);
   display: grid;
   place-items: center;
   padding: 40px;
@@ -292,15 +367,16 @@ body::before {
   max-width: 520px;
   border: var(--hair) solid var(--glass-edge);
   border-radius: var(--r-md);
-  background: var(--surface);
-  padding: 16px 18px;
+  background: var(--surface-panel);
+  padding: 18px 20px;
   max-height: 80%;
   overflow-y: auto;
 }
 .diag-head {
   display: flex;
   justify-content: space-between;
-  font-size: 9px;
+  font-family: var(--mono);
+  font-size: 8.5px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--ink-faint);
@@ -327,176 +403,23 @@ body::before {
 
 .empty { font-size: 11px; color: var(--ink-ghost); }
 
-/* --------------------------------------------------------------- responsive */
+/* ══════════════════════════════════════════════════ CHANGES VIEW */
+.ch { padding: 20px 30px; overflow-y: auto; height: 100%; }
+.ch-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.ch-eyebrow { font-family: var(--mono); font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--cyan); }
+.ch-title { font-family: var(--font-display); font-size: 22px; color: var(--white); font-weight: 500; margin-top: 4px; }
+.ch-label { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-ghost); margin: 16px 0 8px; }
+.ch-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: var(--hair) solid rgba(100, 180, 255, 0.05);
+}
+.ch-kind { font-family: var(--mono); font-size: 8.5px; text-transform: uppercase; color: var(--cyan-dim); min-width: 80px; }
+.ch-name { font-size: 12px; color: var(--ink); flex: 1; }
+.ch-rel { font-family: var(--mono); font-size: 9px; color: var(--ink-faint); }
+
+/* ══════════════════════════════════════════════════ RESPONSIVE */
 @media (max-width: 900px) {
-  .sp { grid-template-columns: 1fr; gap: 18px; padding: 8px 20px 16px; }
+  .sp { grid-template-columns: 1fr; gap: 20px; padding: 8px 20px 16px; }
   .sp-photo img { max-height: 40vh; }
-  .talk { padding: 8px 20px 12px; }
-}
-
-/* ================================================================== story */
-/* Information first: facts, figures and sources lead; imagery supports. */
-.st { position: relative; width: 100%; height: 100%; overflow: hidden; display: flex; flex-direction: column; }
-
-.st-plate {
-  position: absolute;
-  inset: -8%;
-  background-size: cover;
-  background-position: center;
-  filter: blur(40px) saturate(0.65) brightness(0.34);
-  animation: plateIn 1s var(--ease) both;
-}
-@keyframes plateIn { from { opacity: 0 } to { opacity: 1 } }
-.st-veil {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 85% 65% at 50% 45%, rgba(4,7,12,0.5), rgba(4,7,12,0.92) 78%),
-    linear-gradient(180deg, rgba(4,7,12,0.9), transparent 18%, transparent 76%, rgba(4,7,12,0.95));
-  pointer-events: none;
-}
-
-.st-top {
-  position: relative; z-index: 3;
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 14px; padding: 10px 30px 6px;
-}
-.st-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.st-kind {
-  font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase;
-  color: var(--cyan); border: var(--hair) solid var(--cyan-faint);
-  background: var(--cyan-faint); padding: 2px 6px; border-radius: 3px; flex-shrink: 0;
-}
-.st-headline {
-  font-size: 11.5px; color: var(--ink-soft);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.st-top-right { display: flex; gap: 6px; flex-shrink: 0; }
-
-.st-frame {
-  position: relative; z-index: 2; flex: 1; min-height: 0;
-  overflow-y: auto; padding: 6px 30px 8px;
-  animation: frameUp var(--smooth) var(--ease) both;
-}
-@keyframes frameUp {
-  from { opacity: 0; transform: translateY(12px) }
-  to { opacity: 1; transform: none }
-}
-
-.st-split {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 32px; align-items: center; min-height: 100%;
-}
-.st-wide { max-width: 900px; padding-top: 8px; }
-.st-body { min-width: 0; }
-
-.st-photo { margin: 0; animation: photoIn var(--slow) var(--ease) both; }
-@keyframes photoIn { from { opacity: 0; transform: scale(1.03) } to { opacity: 1; transform: none } }
-.st-photo img {
-  width: 100%; max-height: 58vh; object-fit: cover;
-  border-radius: var(--r-md); border: var(--hair) solid var(--glass-edge);
-  box-shadow: 0 24px 68px rgba(0,0,0,0.65);
-}
-.st-photo figcaption { font-size: 8.5px; color: var(--ink-ghost); margin-top: 7px; line-height: 1.4; }
-.st-cap { display: block; color: var(--ink-faint); margin-bottom: 2px; }
-
-.st h1 { font-size: clamp(24px, 3.2vw, 40px); line-height: 1.08; letter-spacing: -0.03em; margin: 0 0 12px; color: #fff; font-weight: 600; }
-.st h2 { font-size: clamp(18px, 2.2vw, 27px); line-height: 1.16; letter-spacing: -0.02em; margin: 0 0 10px; color: #fff; font-weight: 550; }
-.st p { font-size: 13.5px; line-height: 1.62; color: var(--ink-soft); margin: 0; max-width: 58ch; user-select: text; }
-.st-lead { color: var(--ink); }
-.st-eyebrow { font-size: 9px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--cyan); margin-bottom: 8px; }
-.st-eyebrow.warn { color: var(--warn); }
-.st-role { font-size: 12px; color: var(--cyan); margin-bottom: 10px; }
-
-/* The facts panel — the densest thing on screen, deliberately. */
-.st-facts { margin: 16px 0 0; display: grid; gap: 0; }
-.st-facts.tight { margin-top: 14px; }
-.st-fact {
-  display: grid; grid-template-columns: 116px 1fr; gap: 12px;
-  padding: 6px 0; border-bottom: var(--hair) solid rgba(120,190,235,0.07);
-}
-.st-fact dt {
-  font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--ink-ghost); padding-top: 2px;
-}
-.st-fact dd { margin: 0; font-size: 12.5px; color: var(--ink); line-height: 1.5; user-select: text; }
-
-.st-statv { font-size: clamp(48px, 8vw, 96px); line-height: 0.92; font-weight: 200; letter-spacing: -0.04em; color: #fff; }
-.st-statu { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cyan); margin: 6px 0 14px; }
-
-.st-quote {
-  margin: 0; font-size: clamp(18px, 2.3vw, 28px); line-height: 1.35; color: #fff;
-  font-weight: 300; border-left: 2px solid var(--cyan); padding-left: 20px; user-select: text;
-}
-.st-cite { display: block; margin-top: 14px; padding-left: 22px; font-size: 11.5px; color: var(--ink-faint); font-style: normal; }
-
-.st-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap: 11px; margin-top: 18px; }
-.st-side {
-  border: var(--hair) solid rgba(255,180,84,0.28); border-left: 2px solid var(--warn);
-  border-radius: var(--r-sm); background: rgba(255,180,84,0.05); padding: 12px 13px;
-}
-.st-side-claim { font-size: 12.5px; color: var(--ink); line-height: 1.5; user-select: text; }
-.st-side-src { display: inline-block; margin-top: 8px; font-size: 9.5px; color: var(--ink-faint); text-decoration: none; }
-.st-side-src:hover { color: var(--cyan); }
-.st-unresolved { margin-top: 14px; font-size: 11px; color: var(--warn); opacity: 0.85; }
-
-.st-tl { margin-top: 18px; }
-.st-tl-row { display: grid; grid-template-columns: 92px 18px 1fr; gap: 10px; animation: frameUp var(--smooth) var(--ease) both; }
-.st-tl-date { font-size: 10px; font-family: var(--mono); color: var(--cyan); text-align: right; padding-top: 3px; }
-.st-tl-rail { position: relative; display: flex; justify-content: center; }
-.st-tl-rail::before { content: ''; position: absolute; top: 0; bottom: -4px; width: 1px; background: var(--glass-edge); }
-.st-tl-rail span { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); margin-top: 6px; z-index: 1; box-shadow: 0 0 0 3px var(--void); }
-.st-tl-label { font-size: 12.5px; color: var(--ink); user-select: text; }
-.st-tl-detail { font-size: 11px; color: var(--ink-faint); margin-top: 3px; line-height: 1.5; padding-bottom: 14px; user-select: text; }
-
-.st-srcline { display: flex; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
-.st-srcchip {
-  font-size: 9px; color: var(--ink-faint); text-decoration: none;
-  border: var(--hair) solid var(--glass-edge); border-radius: 3px; padding: 2px 7px;
-}
-.st-srcchip:hover { color: var(--cyan); border-color: var(--cyan-faint); }
-.st-nosrc { font-size: 9px; color: var(--warn); }
-.st-actions { display: flex; gap: 8px; margin-top: 16px; }
-
-.st-bottom { position: relative; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 6px 30px 10px; }
-.st-ticks { display: flex; gap: 4px; flex: 1; }
-.st-tick { height: 2px; flex: 1; max-width: 56px; border: none; padding: 0; border-radius: 1px; background: rgba(120,190,235,0.16); cursor: pointer; transition: background var(--quick), transform var(--quick); }
-.st-tick:hover { transform: scaleY(2.4) }
-.st-tick.past { background: rgba(120,190,235,0.4) }
-.st-tick.on { background: var(--cyan); box-shadow: 0 0 10px var(--cyan-glow) }
-.st-controls { display: flex; align-items: center; gap: 8px; }
-.st-count { font-size: 9.5px; color: var(--ink-ghost); font-family: var(--mono); }
-
-.st-sources { position: absolute; inset: 0; z-index: 10; background: rgba(4,7,12,0.86); backdrop-filter: blur(16px); display: flex; align-items: flex-end; }
-.st-sources-inner { width: 100%; max-height: 80%; overflow-y: auto; padding: 18px 30px 22px; border-top: var(--hair) solid var(--glass-edge-strong); }
-.st-label { font-size: 8.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-ghost); margin: 12px 0 8px; }
-.st-source { display: flex; align-items: baseline; gap: 9px; padding: 4px 0; text-decoration: none; font-size: 11px; }
-.st-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
-.st-dot.ok { background: var(--ok) } .st-dot.bad { background: var(--warn) }
-.st-source-pub { color: var(--cyan-dim); min-width: 130px; font-family: var(--mono); font-size: 9px; }
-.st-source-title { color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.st-source:hover .st-source-title { color: var(--ink-soft) }
-.st-openq { font-size: 11.5px; color: var(--ink-soft); line-height: 1.55; padding: 5px 0 5px 12px; border-left: 2px solid rgba(255,180,84,0.35); margin-bottom: 5px; }
-.st-related { display: flex; gap: 6px; flex-wrap: wrap; }
-.st-open { margin-top: 18px; border-top: var(--hair) solid var(--glass-edge); padding-top: 12px; }
-
-.st-fail { display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 30px; }
-.st-fail-title { font-size: 15px; color: var(--ink) }
-.st-fail-why { font-size: 11.5px; color: var(--ink-faint); max-width: 50ch; line-height: 1.55 }
-
-@media (max-width: 900px) {
-  .st-split { grid-template-columns: 1fr; gap: 16px }
-  .st-photo img { max-height: 32vh }
-  .st-frame, .st-top, .st-bottom { padding-left: 18px; padding-right: 18px }
-}
-
-/* The sketch is visibly unverified until research replaces it. */
-.st-prov {
-  font-size: 8px; letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--warn); border: var(--hair) solid rgba(255,180,84,0.35);
-  background: rgba(255,180,84,0.08); padding: 2px 6px; border-radius: 3px;
-}
-.st-checking {
-  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--cyan); animation: breathe 1.8s var(--ease-in-out) infinite;
+  .talk { padding: 6px 20px 12px; }
 }
