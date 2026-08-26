@@ -15,8 +15,11 @@ import type {
   Spotlight,
   Projection,
   GraphChanges,
-  IntentInfo
+  IntentInfo,
+  Explanation
 } from '../shared/types'
+
+type ExplainFrameMedia = { image: string; credit: string; pageUrl: string; caption?: string }
 
 interface HistoryTurn {
   id: number
@@ -48,6 +51,11 @@ declare global {
       onFocusView(cb: (v: { view: string; subject: string }) => void): () => void
       onPresent(cb: (v: boolean) => void): () => void
       project(subject: string): Promise<Projection>
+      explain(subject: string): Promise<Explanation>
+      recentExplanations(limit?: number): Promise<{ id: string; subject: string; at: number }[]>
+      getExplanation(id: string): Promise<Explanation | null>
+      onStory(cb: (s: Explanation) => void): () => void
+      onStoryMedia(cb: (m: { frameId: string; media: NonNullable<ExplainFrameMedia> }) => void): () => void
       spotlight(subject: string): Promise<Spotlight>
       onSpotlight(cb: (s: Spotlight) => void): () => void
       research(subject: string): Promise<Briefing>

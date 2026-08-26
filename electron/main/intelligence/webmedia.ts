@@ -34,6 +34,15 @@ export interface WebImage {
   declaredWidth: number | null
   /** True once the image itself has been confirmed to load. */
   reachable: boolean
+  /**
+   * How likely this is an actual photograph of the subject.
+   *
+   * Article photography with matching caption text scores far above a page's
+   * social share card, which is usually a branded graphic rather than a photo.
+   */
+  score: number
+  /** Where it came from, so share cards can be de-prioritised downstream. */
+  origin: 'article' | 'share-card'
 }
 
 export interface WebSubject {
@@ -165,18 +174,36 @@ function scrapePage(html: string, pageUrl: string, subjectHint: string): {
 
   const images: WebImage[] = []
   const seen = new Set<string>()
-  const push = (raw: string | null, declaredWidth: number | null): void => {
+  const push = (
+    raw: string | null,
+    declaredWidth: number | null,
+    score: number,
+    origin: 'article' | 'share-card'
+  ): void => {
     if (!raw) return
     const abs = absolutise(raw, pageUrl)
     if (!abs || seen.has(abs)) return
     if (/\.svg($|\?)/i.test(abs)) return
     seen.add(abs)
-    images.push({ url: abs, pageUrl, publisher, title, declaredWidth, reachable: false })
+    images.push({ url: abs, pageUrl, publisher, title, declaredWidth, reachable: false, score, origin })
   }
 
-  // The page's declared preview images, in the order publishers intend.
-  push(meta(html, 'og:image:secure_url', 'og:image:url', 'og:image'), Number(meta(html, 'og:image:width')) || null)
-  push(meta(html, 'twitter:image', 'twitter:image:src'), null)
+  // Social share cards are collected but scored low: publishers usually set
+  // og:image to a branded template or illustration, not a photograph of the
+  // subject, which is exactly the "generic thumbnail" problem.
+  const ogWidth = Number(meta(html, 'og:image:width')) || null
+  const ogHeight = Number(meta(html, 'og:image:height')) || null
+  // 1200x630 and 2:1 are the standard social-card ratios.
+  const cardShaped =
+    (ogWidth === 1200 && ogHeight === 630) ||
+    (!!ogWidth && !!ogHeight && Math.abs(ogWidth / ogHeight - 1.91) < 0.06)
+  push(
+    meta(html, 'og:image:secure_url', 'og:image:url', 'og:image'),
+    ogWidth,
+    cardShaped ? -5 : 1,
+    'share-card'
+  )
+  push(meta(html, 'twitter:image', 'twitter:image:src'), null, -5, 'share-card')
 
   // Real article photography, not just the share card.
   //
@@ -205,17 +232,23 @@ function scrapePage(html: string, pageUrl: string, subjectHint: string): {
     const width = Number(tag.match(/\bwidth=["']?(\d+)/i)?.[1]) || null
     if (width !== null && width < 300) continue
 
-    // Score on subject words appearing in the alt text; a caption naming the
-    // subject is the strongest available signal that the photo depicts them.
+    // A caption naming the subject is the strongest available signal that the
+    // photograph actually depicts them.
     let score = 0
-    for (const w of words) if (alt.includes(w)) score += 10
-    if (width && width >= 600) score += 3
-    if (/\b(photo|portrait|pictured|image)\b/.test(alt)) score += 2
+    for (const w of words) if (alt.includes(w)) score += 20
+    if (alt.length > 25) score += 4              // a real caption, not filler
+    if (width && width >= 900) score += 6
+    else if (width && width >= 600) score += 3
+    if (/\b(photo|photograph|portrait|pictured|getty|reuters|ap photo)\b/.test(alt)) score += 8
+    // Figures and captions are where editorial photography lives.
+    if (/<figure|itemprop=["']image["']/i.test(html.slice(Math.max(0, m.index - 200), m.index))) {
+      score += 5
+    }
     candidates.push({ url: src, score, width })
   }
 
   candidates.sort((a, b) => b.score - a.score || (b.width ?? 0) - (a.width ?? 0))
-  for (const c of candidates.slice(0, 5)) push(c.url, c.width)
+  for (const c of candidates.slice(0, 5)) push(c.url, c.width, c.score, 'article')
 
   const description = meta(html, 'og:description', 'twitter:description', 'description')
 
@@ -346,20 +379,32 @@ export async function resolveFromWeb(
   const checked = await Promise.all(
     all.slice(0, 16).map(async (img) => {
       const { ok, bytes } = await imageLoads(img.url)
-      return { ...img, reachable: ok, declaredWidth: img.declaredWidth ?? (bytes > 120_000 ? 1200 : null) }
+      // A heavy payload is itself evidence of real photography.
+      const weighty = bytes > 150_000
+      return {
+        ...img,
+        reachable: ok,
+        declaredWidth: img.declaredWidth ?? (weighty ? 1200 : null),
+        score: img.score + (weighty ? 4 : 0)
+      }
     })
   )
   const usable = checked.filter((i) => i.reachable)
 
-  // Rank on image quality alone — no publisher is privileged. A news
-  // photograph, an official page's own picture and an encyclopaedia image all
-  // compete on the same footing, judged by declared size and payload weight.
-  usable.sort((a, b) => (b.declaredWidth ?? 0) - (a.declaredWidth ?? 0))
+  // Rank on how likely each image is to be a photograph OF the subject, with
+  // size as the tie-break. No publisher is privileged; a share card loses to a
+  // captioned article photo even when the card is larger.
+  usable.sort((a, b) => b.score - a.score || (b.declaredWidth ?? 0) - (a.declaredWidth ?? 0))
+
+  // If any genuine article photography was found, drop the share cards
+  // entirely rather than padding the wall with branded graphics.
+  const photos = usable.filter((i) => i.origin === 'article' && i.score > 0)
+  const ranked = photos.length > 0 ? photos : usable
 
   // Spread the media wall across publishers so one site cannot dominate it.
   const perPublisher = new Map<string, number>()
   const diverse: WebImage[] = []
-  for (const img of usable) {
+  for (const img of ranked) {
     const n = perPublisher.get(img.publisher) ?? 0
     if (n >= 2) continue
     perPublisher.set(img.publisher, n + 1)
@@ -371,7 +416,7 @@ export async function resolveFromWeb(
   )
   return {
     subject: clean,
-    hero: diverse[0] ?? usable[0] ?? null,
+    hero: diverse[0] ?? ranked[0] ?? null,
     images: diverse,
     description,
     extract,

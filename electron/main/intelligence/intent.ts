@@ -142,15 +142,21 @@ export function routeIntent(text: string): Intent {
     // Strip the scaffolding people speak around a subject: a leading "me",
     // possessives, and the media noun itself. "show me his picture" names no
     // subject at all once those are gone, which is the signal to inherit one.
+    // Strip the scaffolding people speak around a subject: a leading "me",
+    // articles, possessives, the media noun itself, and the preposition left
+    // behind once the noun is gone. "show me a picture of Alan Turing" must
+    // reduce to "Alan Turing", not "of Alan Turing".
     const raw = (m[1] ?? '')
       .trim()
       .replace(/^me\b\s*/i, '')
-      .replace(/^(?:the|a|an)\s+/i, '')
-      .replace(/^(?:his|her|their|its|my)\s+/i, '')
-      .replace(/\b(?:picture|photo|image|portrait|face|footage|clip|video)s?\b/gi, '')
+      .replace(/\b(?:picture|photo|image|portrait|face|footage|clip|video)s?\b/gi, ' ')
       .replace(/'s\b/g, '')
-      .replace(/\s+/g, ' ')
+      .replace(/^\s*(?:a|an|the)\s+/i, '')
+      .replace(/^\s*(?:of|about|for|on)\s+/i, '')
+      .replace(/^\s*(?:his|her|their|its|my)\s+/i, '')
+      .replace(/\s{2,}/g, ' ')
       .trim()
+
     let subject: string | null = raw.length >= 2 && raw.length <= 90 ? raw : null
     let inherited = false
 
@@ -163,7 +169,55 @@ export function routeIntent(text: string): Intent {
     return { view, subject, inherited }
   }
 
+  // ---- default: anything informational still gets a storyboard -----------
+  //
+  // The storyboard is not a special mode you have to ask for. Any question
+  // seeking knowledge about the world assembles one; only chit-chat and
+  // machine commands stay purely conversational.
+  const informational = looksInformational(t)
+  if (informational) return { view: 'briefing', subject: informational, inherited: false }
+
   return { view: 'none', subject: null, inherited: false }
+}
+
+/** Openers that ask about the world rather than about this machine. */
+const QUESTION_OPENERS =
+  /^(?:jarvis[,\s]+)?(what|who|when|where|why|how|which|is|are|was|were|does|do|did|can|could|should|explain|describe|compare|define)\b/i
+
+/** Conversational filler that deserves no visual at all. */
+const SMALL_TALK =
+  /^(?:jarvis[,\s]+)?(hi|hey|hello|yo|thanks|thank you|ok|okay|sure|yes|yeah|no|nope|cool|nice|got it|never ?mind|stop|wait|sorry|good (morning|evening|night)|how are you|what'?s up|are you (there|listening|awake))\b/i
+
+/**
+ * Extracts the thing an informational question is about.
+ *
+ * Deliberately conservative: it strips the interrogative scaffolding and keeps
+ * what remains only if it reads like a real subject. Anything shorter than two
+ * words, or that mentions this machine, is left to the conversation.
+ */
+function looksInformational(t: string): string | null {
+  if (SMALL_TALK.test(t)) return null
+  if (!QUESTION_OPENERS.test(t) && !/\?$/.test(t)) return null
+  if (t.split(/\s+/).length < 3) return null
+
+  const subject = t
+    .replace(/^(?:jarvis[,\s]+)?/i, '')
+    .replace(
+      /^(what|who|when|where|why|how|which)\s+(is|are|was|were|does|do|did|can|could|should|much|many|long|far)?\s*/i,
+      ''
+    )
+    .replace(/^(is|are|was|were|does|do|did|can|could|should)\s+/i, '')
+    .replace(/^(?:the|a|an)\s+/i, '')
+    .replace(/^(?:me\s+)?(?:about|regarding)\s+/i, '')
+    .replace(/\?+$/, '')
+    .trim()
+
+  if (subject.split(/\s+/).length < 2 || subject.length > 110) return null
+  // Requests to act on this machine are handled conversationally.
+  if (/\b(my|this|that)\s+(mac|computer|screen|file|project|code|app|window)\b/i.test(subject)) {
+    return null
+  }
+  return subject
 }
 
 /** Whether this view needs a full research pass, or can be assembled locally. */

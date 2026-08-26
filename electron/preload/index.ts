@@ -33,6 +33,13 @@ const api = {
   onPresent: (cb: (v: boolean) => void) => sub('present', cb),
   project: (subject: string) => ipcRenderer.invoke('project', subject),
 
+  // Explanations — the fast storyboard pipeline
+  explain: (subject: string) => ipcRenderer.invoke('explain', subject),
+  recentExplanations: (limit?: number) => ipcRenderer.invoke('explain:recent', limit),
+  getExplanation: (id: string) => ipcRenderer.invoke('explain:get', id),
+  onStory: (cb: (s: unknown) => void) => sub('story', cb),
+  onStoryMedia: (cb: (m: unknown) => void) => sub('story-media', cb),
+
   // Briefings
   research: (subject: string) => ipcRenderer.invoke('brief:research', subject),
   recentBriefings: (limit?: number) => ipcRenderer.invoke('brief:recent', limit),

@@ -49,6 +49,7 @@ import {
 } from './store/graph.js'
 import { extractFromExchange } from './intelligence/extract.js'
 import { research, recentBriefings, getBriefing, isBriefingRunning } from './intelligence/briefing.js'
+import { explain, isExplaining, recentExplanations, getExplanation, warmWorkers } from './intelligence/explain.js'
 import { showMeSubject, spotlight } from './intelligence/spotlight.js'
 import { routeIntent, needsResearch, type ViewIntent } from './intelligence/intent.js'
 import { project, isProjecting } from './intelligence/scenarios.js'
@@ -299,23 +300,27 @@ function wireEvents(): void {
     const subject = intent.subject
     const progress = (stage: string): void => send('brief-progress', { subject, stage })
 
+    // Every visual intent runs the same fast pipeline: one research pass that
+    // emits the story as soon as it parses, then streams imagery in behind it.
+    const runExplain = (): void => {
+      if (isExplaining()) return
+      void explain(subject, {
+        cwd: workspaceRoot,
+        onProgress: (stage) => send('brief-progress', { subject, stage }),
+        onStory: (story) => send('story', story),
+        onMedia: (frameId, media) => send('story-media', { frameId, media })
+      })
+    }
+
     switch (intent.view) {
-      // Media straight onto the stage.
+      // A bare "show me" only needs the picture, so it takes the cheap path.
       case 'spotlight':
-      case 'portrait':
-        progress('Searching the web')
+        progress('Searching')
         void spotlight(subject, { cwd: workspaceRoot, onProgress: progress }).then((s) =>
           send('spotlight', s)
         )
-        // A named person also deserves the full profile behind the portrait.
-        if (intent.view === 'portrait' && !isBriefingRunning()) {
-          void research(subject, { cwd: workspaceRoot, onProgress: progress }).then((b) =>
-            send('brief-done', b)
-          )
-        }
         break
 
-      // Possible futures.
       case 'scenario':
         if (isProjecting()) break
         progress('Projecting')
@@ -324,28 +329,23 @@ function wireEvents(): void {
         )
         break
 
-      // What the graph has learned since.
       case 'changes':
         send('changes', changesSince(24 * 60 * 60 * 1000))
         break
 
-      // Views that read from the briefing already on screen.
+      // Views that read from whatever story is already on screen.
       case 'evidence':
       case 'timeline':
       case 'map':
         send('focus-view', { view: intent.view, subject })
         break
 
-      // Full research passes.
+      // Everything else assembles a full storyboard.
+      case 'portrait':
       case 'event':
       case 'briefing':
       case 'presentation':
-        if (isBriefingRunning()) break
-        progress('Searching')
-        void research(subject, { cwd: workspaceRoot, onProgress: progress }).then((b) => {
-          send('brief-done', b)
-          if (intent.view === 'presentation') send('present', true)
-        })
+        runExplain()
         break
     }
   })
@@ -718,6 +718,17 @@ function registerIpc(): void {
   ipcMain.handle('voice:open-settings', (_e, pane: 'SpeechRecognition' | 'Microphone' | 'Dictation') =>
     openPrivacySettings(pane)
   )
+  ipcMain.handle('explain', async (_e, subject: string) => {
+    return explain(subject, {
+      cwd: workspaceRoot,
+      onProgress: (stage) => send('brief-progress', { subject, stage }),
+      onStory: (story) => send('story', story),
+      onMedia: (frameId, media) => send('story-media', { frameId, media })
+    })
+  })
+  ipcMain.handle('explain:recent', (_e, limit?: number) => recentExplanations(limit ?? 20))
+  ipcMain.handle('explain:get', (_e, id: string) => getExplanation(id))
+
   ipcMain.handle('project', async (_e, subject: string) => {
     const p = await project(subject, {
       cwd: workspaceRoot,
@@ -856,6 +867,10 @@ app.whenReady().then(async () => {
   await detectAuth()
   log('claude running:', claude.isRunning, 'connected:', claude.connected, 'auth:', authStatus)
   send('session', sessionInfo())
+
+  // Structured workers start now so the first question does not pay the CLI
+  // start-up cost, which was the bulk of the old time-to-first-paint.
+  void warmWorkers(workspaceRoot)
 
   // Sight and control. Claude Code inherits these grants as a child process.
   orchestrator.setContextProvider(screenContext)

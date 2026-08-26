@@ -307,6 +307,8 @@ export interface WebImage {
   title: string | null
   declaredWidth: number | null
   reachable: boolean
+  score: number
+  origin: 'article' | 'share-card'
 }
 
 export interface Spotlight {
@@ -357,4 +359,56 @@ export interface IntentInfo {
   view: string
   subject: string | null
   inherited: boolean
+}
+
+// ------------------------------------------------------- fast explain path
+
+export interface Fact {
+  label: string
+  value: string
+}
+
+export interface ExplainSource {
+  id: number
+  title: string
+  url: string
+  publisher: string
+  date?: string
+  reachable?: boolean
+}
+
+export interface ExplainFrame {
+  id: string
+  kind: FrameKind | 'facts'
+  title: string
+  narration: string
+  subject?: string
+  role?: string
+  confidence: Confidence
+  sources: number[]
+  facts?: Fact[]
+  sides?: { claim: string; source: number }[]
+  value?: string
+  unit?: string
+  quote?: string
+  attribution?: string
+  timeline?: { date: string; label: string; detail?: string }[]
+  media?: { image: string; credit: string; pageUrl: string; caption?: string }
+}
+
+export interface Explanation {
+  id: string
+  subject: string
+  kind: string
+  headline: string
+  summary: string
+  facts: Fact[]
+  frames: ExplainFrame[]
+  sources: ExplainSource[]
+  openQuestions: string[]
+  relatedSubjects: string[]
+  at: number
+  ms: number
+  provisional?: boolean
+  failure?: string
 }
