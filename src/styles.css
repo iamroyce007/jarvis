@@ -101,61 +101,204 @@ body::before {
 .stage-area > * { flex: 1; min-width: 0; }
 
 /* ══════════════════════════════════════════════════════ REST STATE */
-/* The core alone in the dark — a single point of intelligence waiting */
 .rest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 40px 20px;
+  width: 100%;
+  height: 100%;
+  animation: fadeIn var(--smooth) var(--ease) both;
+}
+
+.rest-hud-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.rest-telemetry {
+  display: flex;
+  gap: 18px;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: var(--ink-ghost);
+}
+
+.rest-telemetry strong.ok { color: var(--ok); text-shadow: 0 0 8px var(--ok-glow); }
+.rest-telemetry strong.cyan { color: var(--cyan); text-shadow: 0 0 8px var(--cyan-glow); }
+
+.jarvis-core-wrap {
   display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 24px;
+  place-items: center;
+  position: relative;
+  transition: transform var(--smooth) var(--ease);
+}
+
+.jarvis-core-wrap:hover {
+  transform: scale(1.03);
+}
+
+.rest-targets {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 900px;
+  animation: slideUp var(--slow) var(--ease) 100ms both;
+}
+
+.rest-targets-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.24em;
+}
+
+.rest-chips {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
   width: 100%;
 }
-.rest-hint {
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 300;
-  letter-spacing: 0.2em;
-  color: var(--ink-ghost);
-  text-transform: uppercase;
+
+.rest-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  background: var(--surface-glass);
+  border: var(--hair) solid var(--glass-edge);
+  cursor: pointer;
+  transition: all var(--quick) var(--ease);
+  text-align: left;
+}
+
+.rest-chip:hover {
+  border-color: var(--cyan);
+  background: rgba(79, 214, 255, 0.08);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-sm), 0 0 16px var(--cyan-glow);
+}
+
+.rest-chip-title {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--white);
+}
+
+.rest-chip-sub {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  color: var(--cyan-dim);
+  margin-top: 2px;
 }
 
 /* ══════════════════════════════════════════════════ ASSEMBLING STATE */
-/* JARVIS is researching — the core shrinks and activity materializes */
 .assembling {
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 14px;
-  width: 100%;
-  text-align: center;
-}
-.assembling-subject {
-  font-family: var(--font-display);
-  font-size: clamp(22px, 3vw, 34px);
-  font-weight: 400;
-  color: var(--white);
-  letter-spacing: -0.02em;
-  margin-top: 8px;
-  animation: slideUp var(--smooth) var(--ease) both;
-}
-.assembling-stage {
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--cyan);
-  animation: breathe 2s var(--ease-in-out) infinite;
-}
-.assembling-steps {
-  margin-top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  width: 100%;
+  height: 100%;
+  padding: 20px 40px;
+  animation: fadeIn var(--smooth) var(--ease) both;
 }
+
+.assembling-hud {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.assembling-core-wrap {
+  margin: 4px 0;
+  animation: scaleIn var(--smooth) var(--ease) both;
+}
+
+.assembling-subject {
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3.4vw, 42px);
+  font-weight: 500;
+  color: var(--white);
+  letter-spacing: -0.02em;
+  margin: 0;
+  animation: slideUp var(--smooth) var(--ease) both;
+}
+
+.assembling-stage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  border-radius: var(--r-sm);
+  margin-top: 2px;
+}
+
+.assembling-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan-glow);
+  animation: pulse 1.2s infinite;
+}
+
+.assembling-stage {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+.assembling-stream {
+  width: 100%;
+  max-width: 580px;
+  padding: 16px 20px;
+  border-radius: var(--r-md);
+  animation: slideUp var(--smooth) var(--ease) 100ms both;
+}
+
+.assembling-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .assembling-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  transition: color var(--quick);
+}
+
+.assembling-step.active {
+  color: var(--white);
+}
+
+.step-num {
   font-family: var(--mono);
   font-size: 9px;
-  color: var(--ink-ghost);
-  animation: slideUp var(--smooth) var(--ease) both;
+  color: var(--cyan-dim);
+}
+
+.assembling-step.active .step-num {
+  color: var(--cyan);
+  font-weight: 600;
 }
 
 /* ══════════════════════════════════════════════════════ SPOTLIGHT */

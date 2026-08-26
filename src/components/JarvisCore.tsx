@@ -2,15 +2,12 @@ import { useEffect, useRef } from 'react'
 import type { JarvisState } from '../../shared/types'
 
 /**
- * The JARVIS core — a single luminous sphere of intelligence.
+ * JARVIS Holographic Arc Reactor Core.
  *
- * No dots. No rings. No particles. No orbital mechanics.
- * A living point of light whose radiance, color, and breathing rhythm
- * communicate what the system is doing. Someone watching only this
- * should know whether JARVIS is idle, listening, thinking, or speaking.
- *
- * The waveform is drawn as a luminous ripple on the core's surface
- * when audio is flowing — not a separate ring.
+ * Inspired by Tony Stark's Mark VII laboratory interface:
+ * Volumetric luminous energy core surrounded by holographic HUD rings,
+ * rotating orbital telemetry arcs, segmented compass degrees,
+ * dynamic audio frequency waveforms, and ambient particle dust.
  */
 
 interface Props {
@@ -20,33 +17,41 @@ interface Props {
   size?: number
 }
 
-const BEHAVIOUR: Record<
-  JarvisState,
-  { color: string; intensity: number; breathRate: number; breathDepth: number; bloom: number; scale: number }
-> = {
-  IDLE:                     { color: '#2a8db3', intensity: 0.5,  breathRate: 0.6,  breathDepth: 0.04, bloom: 0.3,  scale: 1.0 },
-  LISTENING:                { color: '#4fd6ff', intensity: 0.85, breathRate: 1.0,  breathDepth: 0.06, bloom: 0.6,  scale: 1.05 },
-  UNDERSTANDING:            { color: '#6ba8ff', intensity: 0.75, breathRate: 1.4,  breathDepth: 0.05, bloom: 0.5,  scale: 1.02 },
-  THINKING:                 { color: '#9d8cff', intensity: 0.9,  breathRate: 2.0,  breathDepth: 0.03, bloom: 0.7,  scale: 0.98 },
-  PLANNING:                 { color: '#9d8cff', intensity: 0.7,  breathRate: 1.6,  breathDepth: 0.04, bloom: 0.5,  scale: 1.0 },
-  RESEARCHING:              { color: '#6ba8ff', intensity: 0.95, breathRate: 2.4,  breathDepth: 0.04, bloom: 0.8,  scale: 1.02 },
-  EXECUTING:                { color: '#4fd6ff', intensity: 1.0,  breathRate: 3.0,  breathDepth: 0.02, bloom: 0.9,  scale: 1.06 },
-  WAITING_FOR_CONFIRMATION: { color: '#ffb454', intensity: 0.7,  breathRate: 1.0,  breathDepth: 0.08, bloom: 0.5,  scale: 1.0 },
-  SPEAKING:                 { color: '#4fd6ff', intensity: 0.8,  breathRate: 1.2,  breathDepth: 0.05, bloom: 0.6,  scale: 1.04 },
-  SUCCESS:                  { color: '#52e0a8', intensity: 0.75, breathRate: 0.8,  breathDepth: 0.05, bloom: 0.5,  scale: 1.08 },
-  WARNING:                  { color: '#ffb454', intensity: 0.7,  breathRate: 1.4,  breathDepth: 0.06, bloom: 0.4,  scale: 1.0 },
-  INTERRUPTED:              { color: '#ffb454', intensity: 0.4,  breathRate: 0.3,  breathDepth: 0.02, bloom: 0.2,  scale: 0.95 },
-  ERROR:                    { color: '#ff6b6b', intensity: 0.6,  breathRate: 2.0,  breathDepth: 0.08, bloom: 0.3,  scale: 0.92 },
-  EMERGENCY_HALT:           { color: '#ff6b6b', intensity: 0.3,  breathRate: 3.0,  breathDepth: 0.1,  bloom: 0.15, scale: 0.88 }
+interface StateStyle {
+  color: string
+  coreGlow: string
+  intensity: number
+  spinSpeed: number
+  breathRate: number
+  bloom: number
 }
 
-export function JarvisCore({ state, level, size = 260 }: Props) {
+const BEHAVIOUR: Record<JarvisState, StateStyle> = {
+  IDLE:                     { color: '#4fd6ff', coreGlow: '#2a8db3', intensity: 0.75, spinSpeed: 0.4,  breathRate: 0.8, bloom: 0.6 },
+  LISTENING:                { color: '#52e0a8', coreGlow: '#4fd6ff', intensity: 1.0,  spinSpeed: 0.9,  breathRate: 1.4, bloom: 0.9 },
+  UNDERSTANDING:            { color: '#6ba8ff', coreGlow: '#4fd6ff', intensity: 0.9,  spinSpeed: 1.2,  breathRate: 1.8, bloom: 0.8 },
+  THINKING:                 { color: '#9d8cff', coreGlow: '#6ba8ff', intensity: 1.0,  spinSpeed: 1.8,  breathRate: 2.2, bloom: 0.95 },
+  PLANNING:                 { color: '#9d8cff', coreGlow: '#4fd6ff', intensity: 0.85, spinSpeed: 1.4,  breathRate: 1.6, bloom: 0.75 },
+  RESEARCHING:              { color: '#6ba8ff', coreGlow: '#9d8cff', intensity: 1.0,  spinSpeed: 2.2,  breathRate: 2.6, bloom: 1.0 },
+  EXECUTING:                { color: '#4fd6ff', coreGlow: '#52e0a8', intensity: 1.0,  spinSpeed: 2.5,  breathRate: 3.0, bloom: 1.0 },
+  WAITING_FOR_CONFIRMATION: { color: '#ffb454', coreGlow: '#ffb454', intensity: 0.9,  spinSpeed: 0.8,  breathRate: 1.2, bloom: 0.8 },
+  SPEAKING:                 { color: '#4fd6ff', coreGlow: '#52e0a8', intensity: 0.95, spinSpeed: 1.1,  breathRate: 1.5, bloom: 0.85 },
+  SUCCESS:                  { color: '#52e0a8', coreGlow: '#52e0a8', intensity: 0.9,  spinSpeed: 0.6,  breathRate: 1.0, bloom: 0.8 },
+  WARNING:                  { color: '#ffb454', coreGlow: '#ff6b6b', intensity: 0.85, spinSpeed: 1.6,  breathRate: 1.8, bloom: 0.7 },
+  INTERRUPTED:              { color: '#ffb454', coreGlow: '#ff6b6b', intensity: 0.5,  spinSpeed: 0.2,  breathRate: 0.5, bloom: 0.3 },
+  ERROR:                    { color: '#ff6b6b', coreGlow: '#ff6b6b', intensity: 0.8,  spinSpeed: 0.3,  breathRate: 2.0, bloom: 0.5 },
+  EMERGENCY_HALT:           { color: '#ff6b6b', coreGlow: '#ff6b6b', intensity: 0.4,  spinSpeed: 0.0,  breathRate: 0.2, bloom: 0.2 }
+}
+
+export function JarvisCore({ state, level, size = 320 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stateRef = useRef(state)
   const levelRef = useRef(level)
-  const currentRef = useRef({
-    ...BEHAVIOUR.IDLE,
-    r: 42, g: 141, b: 179
+  const animRef = useRef({
+    intensity: 0.75,
+    spin: 0,
+    breath: 0,
+    r: 79, g: 214, b: 255
   })
 
   stateRef.current = state
@@ -61,154 +66,209 @@ export function JarvisCore({ state, level, size = 260 }: Props) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     canvas.width = size * dpr
     canvas.height = size * dpr
-    ctx.scale(dpr, dpr)
 
-    const cx = size / 2
-    const cy = size / 2
-    const maxR = size * 0.38
+    const cx = (size * dpr) / 2
+    const cy = (size * dpr) / 2
+    const baseR = (size * dpr) * 0.38
 
     const hexToRgb = (hex: string): [number, number, number] => {
       const n = parseInt(hex.slice(1), 16)
       return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
     }
 
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // Holographic particle field
+    const particles = Array.from({ length: 32 }, () => ({
+      angle: Math.random() * Math.PI * 2,
+      dist: baseR * (0.3 + Math.random() * 0.9),
+      speed: (0.2 + Math.random() * 0.6) * (Math.random() > 0.5 ? 1 : -1),
+      size: 1 + Math.random() * 2,
+      alpha: 0.2 + Math.random() * 0.6
+    }))
 
     let raf = 0
-    let t = 0
     let smoothLevel = 0
 
     const draw = (): void => {
       const target = BEHAVIOUR[stateRef.current] ?? BEHAVIOUR.IDLE
-      const cur = currentRef.current
+      const cur = animRef.current
       const [tr, tg, tb] = hexToRgb(target.color)
 
-      // Smooth interpolation
-      const k = reduceMotion ? 1 : 0.05
-      cur.intensity += (target.intensity - cur.intensity) * k
-      cur.breathRate += (target.breathRate - cur.breathRate) * k
-      cur.breathDepth += (target.breathDepth - cur.breathDepth) * k
-      cur.bloom += (target.bloom - cur.bloom) * k
-      cur.scale += (target.scale - cur.scale) * k
-      cur.r += (tr - cur.r) * k
-      cur.g += (tg - cur.g) * k
-      cur.b += (tb - cur.b) * k
+      // Smooth interpolations
+      cur.intensity += (target.intensity - cur.intensity) * 0.08
+      cur.r += (tr - cur.r) * 0.08
+      cur.g += (tg - cur.g) * 0.08
+      cur.b += (tb - cur.b) * 0.08
+
+      smoothLevel += (levelRef.current - smoothLevel) * 0.35
+      const amp = Math.min(1, smoothLevel * 4.5)
+
+      cur.spin += 0.008 * target.spinSpeed
+      cur.breath += 0.02 * target.breathRate
 
       const r = Math.round(cur.r)
       const g = Math.round(cur.g)
       const b = Math.round(cur.b)
-      const rgb = (a: number): string => `rgba(${r},${g},${b},${a})`
+      const rgb = (a: number): string => `rgba(${r},${g},${b},${Math.max(0, Math.min(1, a))})`
 
-      smoothLevel += (levelRef.current - smoothLevel) * 0.3
-      const amp = Math.min(1, smoothLevel * 5)
-
-      t += reduceMotion ? 0 : 0.016
-      ctx.clearRect(0, 0, size, size)
-
-      const breathe = 1 + Math.sin(t * cur.breathRate * 2) * cur.breathDepth
-      const coreR = maxR * 0.32 * cur.scale * breathe * (1 + amp * 0.15)
-
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
       ctx.save()
       ctx.translate(cx, cy)
 
-      // ── Outermost atmospheric haze ──────────────────────────
-      const atmo = ctx.createRadialGradient(0, 0, coreR, 0, 0, maxR * 1.8)
-      atmo.addColorStop(0, rgb(0.06 * cur.intensity))
-      atmo.addColorStop(0.3, rgb(0.03 * cur.intensity))
-      atmo.addColorStop(0.6, rgb(0.01 * cur.intensity))
-      atmo.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = atmo
+      const breathe = 1 + Math.sin(cur.breath) * 0.05
+      const coreR = baseR * 0.35 * breathe * (1 + amp * 0.2)
+
+      // ── Layer 1: Ambient Volumetric Haze ──────────────────
+      const haze = ctx.createRadialGradient(0, 0, coreR * 0.2, 0, 0, baseR * 1.3)
+      haze.addColorStop(0, rgb(0.28 * cur.intensity))
+      haze.addColorStop(0.3, rgb(0.12 * cur.intensity))
+      haze.addColorStop(0.7, rgb(0.03 * cur.intensity))
+      haze.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = haze
       ctx.beginPath()
-      ctx.arc(0, 0, maxR * 1.8, 0, Math.PI * 2)
+      ctx.arc(0, 0, baseR * 1.3, 0, Math.PI * 2)
       ctx.fill()
 
-      // ── Bloom layer ─────────────────────────────────────────
-      const bloomR = coreR * (2.8 + amp * 0.6)
-      const bloom = ctx.createRadialGradient(0, 0, coreR * 0.5, 0, 0, bloomR)
-      bloom.addColorStop(0, rgb(0.35 * cur.bloom * cur.intensity))
-      bloom.addColorStop(0.25, rgb(0.18 * cur.bloom * cur.intensity))
-      bloom.addColorStop(0.5, rgb(0.06 * cur.bloom * cur.intensity))
-      bloom.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = bloom
+      // ── Layer 2: Particle Dust Field ───────────────────────
+      for (const p of particles) {
+        p.angle += p.speed * 0.01 * target.spinSpeed
+        const px = Math.cos(p.angle) * p.dist * breathe
+        const py = Math.sin(p.angle) * p.dist * breathe
+        ctx.fillStyle = rgb(p.alpha * cur.intensity * (0.5 + Math.sin(cur.breath + p.dist) * 0.5))
+        ctx.beginPath()
+        ctx.arc(px, py, p.size * dpr, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // ── Layer 3: Outer Telemetry Compass Ring ──────────────
+      const outerR = baseR * 1.05
+      ctx.strokeStyle = rgb(0.18 * cur.intensity)
+      ctx.lineWidth = 1 * dpr
       ctx.beginPath()
-      ctx.arc(0, 0, bloomR, 0, Math.PI * 2)
-      ctx.fill()
+      ctx.arc(0, 0, outerR, 0, Math.PI * 2)
+      ctx.stroke()
 
-      // ── Waveform ripple (only when audio is flowing) ────────
-      if (amp > 0.02 && (stateRef.current === 'LISTENING' || stateRef.current === 'SPEAKING')) {
-        const waveR = coreR * 1.6
-        const waveAlpha = 0.4 * amp * cur.intensity
-        ctx.strokeStyle = rgb(waveAlpha)
-        ctx.lineWidth = 1.5
+      // Compass tick marks
+      const numTicks = 60
+      for (let i = 0; i < numTicks; i++) {
+        const a = (i / numTicks) * Math.PI * 2 + cur.spin * 0.2
+        const isMajor = i % 5 === 0
+        const len = (isMajor ? 6 : 3) * dpr
+        const r1 = outerR - len
+        const r2 = outerR
+        ctx.strokeStyle = rgb((isMajor ? 0.35 : 0.15) * cur.intensity)
+        ctx.lineWidth = (isMajor ? 1.5 : 0.8) * dpr
+        ctx.beginPath()
+        ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1)
+        ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2)
+        ctx.stroke()
+      }
 
-        for (let ring = 0; ring < 3; ring++) {
-          const ringR = waveR + ring * 8
-          const ringAlpha = (1 - ring * 0.3) * waveAlpha
-          ctx.strokeStyle = rgb(ringAlpha)
+      // ── Layer 4: Segmented Rotating HUD Arcs ────────────────
+      const midR = baseR * 0.82
+      ctx.save()
+      ctx.rotate(-cur.spin * 0.7)
+      for (let i = 0; i < 4; i++) {
+        const start = (i * Math.PI) / 2 + 0.15
+        const end = start + Math.PI / 2 - 0.3
+        ctx.strokeStyle = rgb(0.35 * cur.intensity)
+        ctx.lineWidth = 2 * dpr
+        ctx.beginPath()
+        ctx.arc(0, 0, midR, start, end)
+        ctx.stroke()
+
+        // Corner node dots
+        const dotX = Math.cos(start) * midR
+        const dotY = Math.sin(start) * midR
+        ctx.fillStyle = rgb(0.8 * cur.intensity)
+        ctx.beginPath()
+        ctx.arc(dotX, dotY, 2.5 * dpr, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      ctx.restore()
+
+      // ── Layer 5: Inner Counter-Rotating Bracket Ring ────────
+      const innerRingR = baseR * 0.58
+      ctx.save()
+      ctx.rotate(cur.spin * 1.1)
+      for (let i = 0; i < 3; i++) {
+        const start = (i * Math.PI * 2) / 3
+        const end = start + Math.PI * 0.35
+        ctx.strokeStyle = rgb(0.5 * cur.intensity)
+        ctx.lineWidth = 2.5 * dpr
+        ctx.beginPath()
+        ctx.arc(0, 0, innerRingR, start, end)
+        ctx.stroke()
+      }
+      ctx.restore()
+
+      // ── Layer 6: Audio Frequency Equalizer Ring ─────────────
+      if (amp > 0.01 || stateRef.current === 'SPEAKING' || stateRef.current === 'LISTENING') {
+        const eqR = baseR * 0.46
+        const bars = 48
+        for (let i = 0; i < bars; i++) {
+          const a = (i / bars) * Math.PI * 2 + cur.spin
+          const h = (Math.sin(i * 3 + cur.breath * 4) * 0.5 + 0.5) * amp * 22 * dpr + (2 * dpr)
+          const x1 = Math.cos(a) * eqR
+          const y1 = Math.sin(a) * eqR
+          const x2 = Math.cos(a) * (eqR + h)
+          const y2 = Math.sin(a) * (eqR + h)
+
+          ctx.strokeStyle = rgb(0.6 * cur.intensity * (0.4 + amp * 0.6))
+          ctx.lineWidth = 1.8 * dpr
           ctx.beginPath()
-          for (let a = 0; a <= Math.PI * 2 + 0.05; a += 0.04) {
-            const wobble = Math.sin(a * 5 + t * 8 + ring * 1.2) * amp * 6
-              + Math.sin(a * 9 - t * 5 + ring * 0.8) * amp * 3
-            const rr = ringR + wobble
-            const x = Math.cos(a) * rr
-            const y = Math.sin(a) * rr
-            if (a === 0) ctx.moveTo(x, y)
-            else ctx.lineTo(x, y)
-          }
-          ctx.closePath()
+          ctx.moveTo(x1, y1)
+          ctx.lineTo(x2, y2)
           ctx.stroke()
         }
       }
 
-      // ── Main core glow ──────────────────────────────────────
-      const coreGlow = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR * 2)
-      coreGlow.addColorStop(0, rgb(0.95 * cur.intensity))
-      coreGlow.addColorStop(0.15, rgb(0.7 * cur.intensity))
-      coreGlow.addColorStop(0.4, rgb(0.25 * cur.intensity))
-      coreGlow.addColorStop(0.7, rgb(0.06 * cur.intensity))
-      coreGlow.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = coreGlow
+      // ── Layer 7: Central High-Energy Arc Reactor Core ───────
+      // Outermost core bloom
+      const bloom = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR * 2.4)
+      bloom.addColorStop(0, rgb(0.85 * cur.intensity))
+      bloom.addColorStop(0.2, rgb(0.5 * cur.intensity))
+      bloom.addColorStop(0.5, rgb(0.18 * cur.intensity))
+      bloom.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = bloom
       ctx.beginPath()
-      ctx.arc(0, 0, coreR * 2, 0, Math.PI * 2)
+      ctx.arc(0, 0, coreR * 2.4, 0, Math.PI * 2)
       ctx.fill()
 
-      // ── Inner bright core ───────────────────────────────────
-      const innerGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR)
-      innerGrad.addColorStop(0, `rgba(255,255,255,${0.95 * cur.intensity})`)
-      innerGrad.addColorStop(0.2, rgb(0.9 * cur.intensity))
-      innerGrad.addColorStop(0.6, rgb(0.5 * cur.intensity))
-      innerGrad.addColorStop(1, rgb(0.15 * cur.intensity))
-      ctx.fillStyle = innerGrad
+      // Core sphere body
+      const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR)
+      coreGrad.addColorStop(0, '#ffffff')
+      coreGrad.addColorStop(0.25, rgb(0.95 * cur.intensity))
+      coreGrad.addColorStop(0.7, rgb(0.6 * cur.intensity))
+      coreGrad.addColorStop(1, rgb(0.2 * cur.intensity))
+      ctx.fillStyle = coreGrad
       ctx.beginPath()
       ctx.arc(0, 0, coreR, 0, Math.PI * 2)
       ctx.fill()
 
-      // ── Bright center point ─────────────────────────────────
-      const dotR = coreR * 0.35
-      const dot = ctx.createRadialGradient(0, 0, 0, 0, 0, dotR)
-      dot.addColorStop(0, `rgba(255,255,255,${0.98 * cur.intensity})`)
-      dot.addColorStop(0.5, `rgba(255,255,255,${0.4 * cur.intensity})`)
-      dot.addColorStop(1, 'rgba(255,255,255,0)')
-      ctx.fillStyle = dot
+      // Inner white fusion point
+      const fusionR = coreR * 0.38
+      const fusion = ctx.createRadialGradient(0, 0, 0, 0, 0, fusionR)
+      fusion.addColorStop(0, '#ffffff')
+      fusion.addColorStop(0.6, `rgba(255,255,255,${0.9 * cur.intensity})`)
+      fusion.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = fusion
       ctx.beginPath()
-      ctx.arc(0, 0, dotR, 0, Math.PI * 2)
+      ctx.arc(0, 0, fusionR, 0, Math.PI * 2)
       ctx.fill()
 
-      // ── Subtle lens flare ───────────────────────────────────
-      if (cur.intensity > 0.5) {
-        const flareAlpha = 0.08 * cur.intensity * (0.7 + Math.sin(t * 0.3) * 0.3)
-        // Horizontal streak
-        ctx.strokeStyle = rgb(flareAlpha)
-        ctx.lineWidth = 1
+      // ── Layer 8: Horizontal & Vertical Lens Streaks ─────────
+      if (cur.intensity > 0.4) {
+        const streakAlpha = 0.25 * cur.intensity * (0.7 + Math.sin(cur.breath * 2) * 0.3)
+        // Horizontal lens flare
+        const streakGradH = ctx.createLinearGradient(-coreR * 3.5, 0, coreR * 3.5, 0)
+        streakGradH.addColorStop(0, 'rgba(0,0,0,0)')
+        streakGradH.addColorStop(0.5, rgb(streakAlpha))
+        streakGradH.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.strokeStyle = streakGradH
+        ctx.lineWidth = 1.5 * dpr
         ctx.beginPath()
-        ctx.moveTo(-coreR * 3, 0)
-        ctx.lineTo(coreR * 3, 0)
-        ctx.stroke()
-        // Vertical subtle
-        ctx.strokeStyle = rgb(flareAlpha * 0.4)
-        ctx.beginPath()
-        ctx.moveTo(0, -coreR * 2)
-        ctx.lineTo(0, coreR * 2)
+        ctx.moveTo(-coreR * 3.5, 0)
+        ctx.lineTo(coreR * 3.5, 0)
         ctx.stroke()
       }
 
@@ -221,11 +281,13 @@ export function JarvisCore({ state, level, size = 260 }: Props) {
   }, [size])
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: size, height: size, display: 'block' }}
-      role="img"
-      aria-label={`JARVIS core, state: ${state.toLowerCase().replace(/_/g, ' ')}`}
-    />
+    <div className="jarvis-core-wrap" style={{ width: size, height: size }}>
+      <canvas
+        ref={canvasRef}
+        style={{ width: size, height: size, display: 'block' }}
+        role="img"
+        aria-label={`JARVIS holographic core: ${state.toLowerCase().replace(/_/g, ' ')}`}
+      />
+    </div>
   )
 }

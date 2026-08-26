@@ -190,23 +190,77 @@ export default function App() {
       <main className="stage-area">
         {stage.kind === 'rest' ? (
           <div className="rest">
-            <JarvisCore state={state} level={level} size={280} />
-            {turns.length === 0 ? (
-              <div className="rest-hint">Ask me something.</div>
-            ) : null}
+            <div className="rest-hud-top">
+              <span className="eyebrow">TACTICAL INTELLIGENCE ENVIRONMENT</span>
+              <div className="rest-telemetry">
+                <span>SYSTEM: <strong className="ok">ONLINE</strong></span>
+                <span>CORE: <strong className="cyan">ARC-VII 2.4 THz</strong></span>
+                <span>SPEECH VAD: <strong className="cyan">ACTIVE</strong></span>
+              </div>
+            </div>
+
+            <JarvisCore state={state} level={level} size={320} />
+
+            <div className="rest-targets">
+              <div className="rest-targets-label eyebrow faint">SUMMON INTELLIGENCE DOSSIER</div>
+              <div className="rest-chips">
+                {[
+                  { label: 'Quantum Computing', sub: 'Technology' },
+                  { label: 'Elon Musk', sub: 'Person Dossier' },
+                  { label: 'Nvidia AI Architecture', sub: 'Industry' },
+                  { label: 'SpaceX Starship', sub: 'Aerospace' },
+                  { label: 'Nuclear Fusion 2026', sub: 'Energy Analysis' }
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    className="rest-chip glass"
+                    onClick={() => {
+                      setStage({ kind: 'assembling', subject: item.label, stage: 'Initializing holographic assembly' })
+                      void window.jarvis.explain(item.label)
+                    }}
+                  >
+                    <span className="rest-chip-title">{item.label}</span>
+                    <span className="rest-chip-sub">{item.sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         ) : stage.kind === 'assembling' ? (
           <div className="assembling">
-            <JarvisCore state="RESEARCHING" level={level} size={150} />
-            <div className="assembling-subject">{stage.subject}</div>
-            <div className="assembling-stage">{stage.stage}…</div>
-            {steps.length ? (
-              <div className="assembling-steps">
-                {steps.slice(-3).map((s) => (
-                  <div key={s.id} className="assembling-step">{s.label}</div>
-                ))}
+            <div className="assembling-hud">
+              <span className="eyebrow">HOLOGRAPHIC ASSEMBLY IN PROGRESS</span>
+              <div className="assembling-core-wrap">
+                <JarvisCore state="RESEARCHING" level={level} size={180} />
               </div>
-            ) : null}
+              <h1 className="assembling-subject">{stage.subject}</h1>
+              <div className="assembling-stage-badge glass">
+                <span className="assembling-dot" />
+                <span className="assembling-stage">{stage.stage}…</span>
+              </div>
+            </div>
+
+            <div className="assembling-stream glass">
+              <div className="eyebrow faint">TELEMETRY STREAM</div>
+              <div className="assembling-steps-list">
+                <div className="assembling-step active">
+                  <span className="step-num">01</span>
+                  <span>Scanning multi-source global intelligence</span>
+                </div>
+                <div className="assembling-step">
+                  <span className="step-num">02</span>
+                  <span>Extracting entity nodes, timelines & citations</span>
+                </div>
+                <div className="assembling-step">
+                  <span className="step-num">03</span>
+                  <span>Corroborating claims & computing confidence scores</span>
+                </div>
+                <div className="assembling-step">
+                  <span className="step-num">04</span>
+                  <span>Synthesizing high-resolution media & visual storyboards</span>
+                </div>
+              </div>
+            </div>
           </div>
         ) : stage.kind === 'spotlight' ? (
           <SpotlightView

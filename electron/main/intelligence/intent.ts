@@ -157,7 +157,7 @@ export function routeIntent(text: string): Intent {
       .replace(/\s{2,}/g, ' ')
       .trim()
 
-    let subject: string | null = raw.length >= 2 && raw.length <= 90 ? raw : null
+    let subject: string | null = raw.length >= 1 && raw.length <= 110 ? raw : null
     let inherited = false
 
     // A pronoun, or nothing at all, means "what we were just discussing".
@@ -177,12 +177,21 @@ export function routeIntent(text: string): Intent {
   const informational = looksInformational(t)
   if (informational) return { view: 'briefing', subject: informational, inherited: false }
 
+  // Direct entity check: If the user inputs a proper name or subject directly (e.g. "Elon Musk", "Nvidia", "Quantum Computing")
+  if (!SMALL_TALK.test(t) && !MACHINE.test(t) && t.length >= 2 && t.length <= 100) {
+    // Exclude basic conversational phrases
+    const notDirectEntity = /^(can you|please|help|how to|why is|why does|where can)\b/i.test(t)
+    if (!notDirectEntity) {
+      return { view: 'briefing', subject: t, inherited: false }
+    }
+  }
+
   return { view: 'none', subject: null, inherited: false }
 }
 
 /** Openers that ask about the world rather than about this machine. */
 const QUESTION_OPENERS =
-  /^(?:jarvis[,\s]+)?(what|who|when|where|why|how|which|is|are|was|were|does|do|did|can|could|should|explain|describe|compare|define)\b/i
+  /^(?:jarvis[,\s]+)?(what|who|when|where|why|how|which|is|are|was|were|does|do|did|can|could|should|explain|describe|compare|define|tell|brief|research|show|find)\b/i
 
 /** Conversational filler that deserves no visual at all. */
 const SMALL_TALK =
@@ -191,14 +200,11 @@ const SMALL_TALK =
 /**
  * Extracts the thing an informational question is about.
  *
- * Deliberately conservative: it strips the interrogative scaffolding and keeps
- * what remains only if it reads like a real subject. Anything shorter than two
- * words, or that mentions this machine, is left to the conversation.
+ * Strips interrogative scaffolding and returns clean subject.
  */
 function looksInformational(t: string): string | null {
   if (SMALL_TALK.test(t)) return null
-  if (!QUESTION_OPENERS.test(t) && !/\?$/.test(t)) return null
-  if (t.split(/\s+/).length < 3) return null
+  if (MACHINE.test(t)) return null
 
   const subject = t
     .replace(/^(?:jarvis[,\s]+)?/i, '')
@@ -207,12 +213,13 @@ function looksInformational(t: string): string | null {
       ''
     )
     .replace(/^(is|are|was|were|does|do|did|can|could|should)\s+/i, '')
+    .replace(/^(?:tell|explain|describe|show|brief)\s+(?:me\s+)?(?:about|all\s+about|on)?\s*/i, '')
     .replace(/^(?:the|a|an)\s+/i, '')
     .replace(/^(?:me\s+)?(?:about|regarding)\s+/i, '')
     .replace(/\?+$/, '')
     .trim()
 
-  if (subject.split(/\s+/).length < 2 || subject.length > 110) return null
+  if (subject.length < 2 || subject.length > 120) return null
   // Requests to act on this machine are handled conversationally.
   if (/\b(my|this|that)\s+(mac|computer|screen|file|project|code|app|window)\b/i.test(subject)) {
     return null
