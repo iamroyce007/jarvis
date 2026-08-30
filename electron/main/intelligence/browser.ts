@@ -205,6 +205,20 @@ export async function readPage(url: string, timeoutMs = 12_000): Promise<PageCon
   }
 
   let win: BrowserWindow | null = null
+
+  // A hard ceiling on the whole operation.
+  //
+  // The staged timeout below only bounds *navigation*. A page that fails its
+  // TLS handshake, or one whose renderer is wedged, can leave
+  // `executeJavaScript` pending forever — which it did: a single bad source
+  // stalled the imagery step for six minutes with no error and no output.
+  // Nothing here is worth blocking a story for, so the whole read is raced
+  // against a deadline and abandoned.
+  const deadline = new Promise<PageContent>((resolve) =>
+    setTimeout(() => resolve({ ...empty, failure: `timed out after ${timeoutMs + 6000}ms` }), timeoutMs + 6000)
+  )
+
+  const work = (async (): Promise<PageContent> => {
   try {
     win = new BrowserWindow({
       show: false,
@@ -256,6 +270,13 @@ export async function readPage(url: string, timeoutMs = 12_000): Promise<PageCon
   } finally {
     if (win && !win.isDestroyed()) win.destroy()
   }
+  })()
+
+  const result = await Promise.race([work, deadline])
+  // The window is destroyed by `work`'s own finally when it completes; if the
+  // deadline won, tear it down here so a wedged renderer cannot leak.
+  if (win && !(win as BrowserWindow).isDestroyed()) (win as BrowserWindow).destroy()
+  return result
 }
 
 /**
@@ -267,15 +288,24 @@ export async function readPages(urls: string[], concurrency = 4): Promise<PageCo
   const queue = [...urls]
   const started = Date.now()
 
+  // The batch has its own budget as well as the per-page one. Imagery is an
+  // enhancement; the story is already on screen and must not wait on the
+  // slowest publisher.
+  const budgetMs = 26_000
+
   async function worker(): Promise<void> {
     for (;;) {
       const next = queue.shift()
       if (!next) return
+      if (Date.now() - started > budgetMs) return
       out.push(await readPage(next))
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker))
+  await Promise.race([
+    Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker)),
+    new Promise((r) => setTimeout(r, budgetMs + 8000))
+  ])
   const ok = out.filter((p) => !p.failure && p.text.length > 200).length
   log(`browser: read ${ok}/${urls.length} pages in ${Date.now() - started}ms`)
   return out

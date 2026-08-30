@@ -30,6 +30,7 @@ export class StructuredWorker {
   private busy = false
   private queue: (() => void)[] = []
   private tasksRun = 0
+  private warming: Promise<void> | null = null
 
   /**
    * Tasks before the session is recycled.
@@ -56,12 +57,52 @@ export class StructuredWorker {
     })
   }
 
-  /** Spawns the process so the start-up cost is paid before it is needed. */
+  /**
+   * Sends a throwaway prompt so the expensive part of start-up is already done.
+   *
+   * Spawning the process is not enough: Claude Code defers authentication,
+   * tool discovery and the session handshake until the first prompt actually
+   * arrives. A worker that had been "warm" since launch still took
+   * twenty-eight seconds to answer a four-second question, because the user's
+   * question *was* the first prompt.
+   *
+   * The exchange is left in context deliberately. Clearing it means restarting
+   * the process, which discards exactly the state this is paying for — the
+   * first attempt did that and made things worse. One trivial turn is
+   * harmless: every real prompt here is self-contained and carries its own
+   * instructions.
+   */
+  private async prime(): Promise<void> {
+    try {
+      await Promise.race([
+        this.session.send('Reply with the single word: ready'),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('priming timed out')), 90_000)
+        )
+      ])
+      this.tasksRun = 1
+    } catch (err) {
+      // Not fatal — the first real prompt simply pays the cost instead,
+      // exactly as it did before any of this existed.
+      log(`worker priming failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /** Spawns the process and primes it, once, however many callers ask. */
   async warm(): Promise<void> {
     if (this.ready) return
-    await this.session.start(false)
-    this.ready = true
-    log(`worker warm: ${this.opts.model ?? 'haiku'}${this.opts.allowWeb ? ' (web)' : ''}`)
+    if (this.warming) return this.warming
+    this.warming = (async () => {
+      const started = Date.now()
+      await this.session.start(false)
+      this.ready = true
+      await this.prime()
+      log(
+        `worker ready: ${this.opts.model ?? 'haiku'}` +
+          `${this.opts.allowWeb ? ' (web)' : ''} in ${Date.now() - started}ms`
+      )
+    })()
+    return this.warming
   }
 
   /** Serialises access: one prompt at a time per worker. */
@@ -93,6 +134,10 @@ export class StructuredWorker {
       if (this.tasksRun >= StructuredWorker.RECYCLE_AFTER) {
         await this.session.newSession()
         this.tasksRun = 0
+        // The restart throws away the CLI's initialised state, so the next
+        // task would otherwise pay the full cold start. Re-prime here instead,
+        // where nobody is waiting on an answer.
+        await this.prime()
       }
       this.tasksRun += 1
 
@@ -111,6 +156,7 @@ export class StructuredWorker {
   stop(): void {
     this.session.stop()
     this.ready = false
+    this.warming = null
   }
 }
 

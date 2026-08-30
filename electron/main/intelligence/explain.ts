@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { resolveClaudeBinary, enrichedPath } from '../claude/resolve.js'
 import { readPages, type PageContent, type PageImage } from './browser.js'
+import { resolveFromWeb } from './webmedia.js'
 import { mediaUrl, originalUrl, prefetch } from '../media/proxy.js'
 import { ingestExplanation, findConnections, type Connection } from './correlate.js'
 import { fastWorker, webWorker, type StructuredWorker } from './worker.js'
@@ -129,6 +130,11 @@ FRAME KINDS — pick what genuinely explains each point:
 RULES:
 - 6 to 9 frames. First is "hero". Second should usually be "facts". Last is
   "conclusion". Include "conflict" whenever sources genuinely disagree.
+- Include at least two "portrait" frames for the people who actually matter,
+  and a "place" frame when geography matters. Every one of them MUST carry a
+  "subject" (the exact proper name) and a "subjectKind". These names are what
+  makes the answer connectable to everything else you have been asked; a
+  storyboard with no named people is a failure even if the prose is good.
 - "facts" (top level) is the quick-reference panel: 4 to 8 concrete entries like
   {"label":"Born","value":"10 March 1957, Riyadh"}. Specific, checkable, dense.
 - narration is what JARVIS says aloud for that frame: one or two spoken
@@ -297,17 +303,21 @@ const SKETCH_PROMPT = `Answer from your own knowledge. Do NOT search the web.
 
 Return ONLY minified JSON, no prose, no fence:
 {"headline":"","summary":"","kind":"person|event|organization|company|technology|place|concept",
- "facts":[{"label":"","value":""}],
- "frames":[{"kind":"hero|facts|timeline|conclusion","title":"","narration":"","subject":"",
-            "facts":[{"label":"","value":""}],
-            "timeline":[{"date":"","label":"","detail":""}]}]}
+ "facts":[{"label":"","value":""}]}
 
-Exactly 3 or 4 frames: hero, facts, optionally timeline, then conclusion.
-"facts" = 4 to 6 concrete specifics (dates, numbers, roles). Be precise.
-"subject" on the hero must be the exact searchable name.
-If you are unsure of a specific, omit it rather than guessing.`
+"facts": 5 or 6 concrete specifics — dates, numbers, roles, affiliations.
+"summary": one sentence.
+If you are unsure of a specific, omit it rather than guessing. Be terse: this
+is a placeholder that real research replaces within the minute.`
 
-/** Fast, unverified first paint. Never persisted. */
+/**
+ * Fast, unverified first paint. Never persisted, never entered into the graph.
+ *
+ * The frames are built here rather than asked for. Generating them cost eight
+ * seconds of model output for structure that is entirely predictable — a
+ * hero and a facts panel — and those eight seconds were the difference between
+ * an interface that responds and one that hangs.
+ */
 async function sketch(subject: string, cwd?: string): Promise<Explanation | null> {
   const started = Date.now()
   try {
@@ -316,46 +326,47 @@ async function sketch(subject: string, cwd?: string): Promise<Explanation | null
     const parsed = parseJson<Record<string, unknown>>(out)
     if (!parsed) return null
 
-    const facts = (Array.isArray(parsed.facts) ? parsed.facts : []).map((f) => {
-      const o = f as Record<string, unknown>
-      return { label: String(o.label ?? ''), value: String(o.value ?? '') }
-    })
+    const facts = (Array.isArray(parsed.facts) ? parsed.facts : [])
+      .map((f) => {
+        const o = f as Record<string, unknown>
+        return { label: String(o.label ?? ''), value: String(o.value ?? '') }
+      })
+      .filter((f) => f.label && f.value)
 
-    const frames: ExplainFrame[] = (Array.isArray(parsed.frames) ? parsed.frames : []).map((x) => {
-      const o = x as Record<string, unknown>
-      return {
+    if (facts.length === 0) return null
+
+    const headline = String(parsed.headline ?? subject)
+    const summary = String(parsed.summary ?? '')
+
+    const frames: ExplainFrame[] = [
+      {
         id: randomUUID(),
-        kind: (FRAME_KINDS.includes(o.kind as FrameKind) ? o.kind : 'evidence') as FrameKind,
-        title: String(o.title ?? ''),
-        narration: String(o.narration ?? ''),
-        subject: o.subject ? String(o.subject) : undefined,
+        kind: 'hero',
+        title: headline,
+        narration: summary,
+        subject,
         // Unverified by construction: nothing here has been checked yet.
         confidence: 'inferred',
+        sources: []
+      },
+      {
+        id: randomUUID(),
+        kind: 'facts',
+        title: 'What is on record',
+        narration: 'Recalled from memory. Sources are being checked now.',
+        confidence: 'inferred',
         sources: [],
-        facts: Array.isArray(o.facts)
-          ? (o.facts as Record<string, unknown>[]).map((f) => ({
-              label: String(f.label ?? ''),
-              value: String(f.value ?? '')
-            }))
-          : undefined,
-        timeline: Array.isArray(o.timeline)
-          ? (o.timeline as Record<string, unknown>[]).map((t) => ({
-              date: String(t.date ?? ''),
-              label: String(t.label ?? ''),
-              detail: t.detail ? String(t.detail) : undefined
-            }))
-          : undefined
+        facts
       }
-    })
+    ]
 
-    if (frames.length === 0) return null
-    log(`sketch "${subject}": ${frames.length} frames in ${Date.now() - started}ms`)
+    log(`sketch "${subject}": ${facts.length} facts in ${Date.now() - started}ms`)
     return {
       id: randomUUID(),
       subject,
       kind: String(parsed.kind ?? 'concept'),
-      headline: String(parsed.headline ?? subject),
-      summary: String(parsed.summary ?? ''),
+      headline,
+      summary,
       facts,
       frames,
       sources: [],
@@ -418,12 +429,31 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
     // treating it as unhandled in the window before then.
     research.catch(() => undefined)
 
+    // The subject's own photograph does not depend on either model call, and
+    // the Wikipedia route returns a verified portrait in well under a second.
+    // Starting it here means the picture is usually on screen before the first
+    // sentence is, which is the difference between waiting and watching.
+    const heroImage = resolveFromWeb(subject, { cwd: h.cwd })
+      .then((w) => w.hero)
+      .catch(() => null)
+
     // Fast unverified skeleton so something real is on screen in seconds.
     progress('Recalling')
     const quick = await sketch(subject, h.cwd)
     if (quick) {
       progress('Searching sources')
       h.onStory?.(quick)
+      const hero = await heroImage
+      if (hero) {
+        const media = {
+          image: mediaUrl(hero.url, hero.pageUrl),
+          credit: hero.publisher,
+          pageUrl: hero.pageUrl,
+          caption: hero.title ?? undefined
+        }
+        quick.frames[0].media = media
+        h.onMedia?.(quick.frames[0].id, media)
+      }
     }
 
     const stdout = await research
@@ -521,18 +551,73 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
     for (const s of sources) s.reachable = pages.some((p) => p.url === s.url && !p.failure)
 
     const used = new Set<string>()
+    const preresolved = await heroImage
+    if (preresolved) used.add(preresolved.url)
     // Hero first so the opening frame gets the strongest photograph available.
     const ordered = [...frames].sort((a, b) => (a.kind === 'hero' ? -1 : b.kind === 'hero' ? 1 : 0))
     const chosen: { url: string; pageUrl: string }[] = []
+    const unillustrated: ExplainFrame[] = []
+
     for (const f of ordered) {
       if (!f.subject) continue
+      // The subject's own portrait was already resolved and shown; reuse it
+      // rather than paying for it again or, worse, picking a different one.
+      if (
+        f.kind === 'hero' &&
+        preresolved &&
+        f.subject.toLowerCase() === subject.toLowerCase()
+      ) {
+        const media = {
+          image: mediaUrl(preresolved.url, preresolved.pageUrl),
+          credit: preresolved.publisher,
+          pageUrl: preresolved.pageUrl,
+          caption: preresolved.title ?? undefined
+        }
+        f.media = media
+        chosen.push({ url: preresolved.url, pageUrl: preresolved.pageUrl })
+        h.onMedia?.(f.id, media)
+        continue
+      }
       const media = bestImage(pages, f.subject, used)
       if (media) {
         f.media = media
         chosen.push({ url: originalUrl(media.image), pageUrl: media.pageUrl })
         h.onMedia?.(f.id, media)
+      } else {
+        unillustrated.push(f)
       }
     }
+
+    // A frame's subject is often not pictured on the pages that discuss the
+    // *main* subject — an article about Legasov rarely carries a photograph of
+    // Shcherbina. Rather than leave two thirds of the story without imagery,
+    // each remaining subject is resolved on its own. This path has a Wikipedia
+    // fast route that returns a verified portrait in well under a second, so
+    // it is cheap enough to run for every frame that still needs one.
+    if (unillustrated.length > 0) {
+      progress('Finding imagery')
+      await Promise.all(
+        unillustrated.slice(0, 6).map(async (f) => {
+          try {
+            const web = await resolveFromWeb(f.subject as string, { cwd: h.cwd })
+            if (!web.hero || used.has(web.hero.url)) return
+            used.add(web.hero.url)
+            const media = {
+              image: mediaUrl(web.hero.url, web.hero.pageUrl),
+              credit: web.hero.publisher,
+              pageUrl: web.hero.pageUrl,
+              caption: web.hero.title ?? undefined
+            }
+            f.media = media
+            chosen.push({ url: web.hero.url, pageUrl: web.hero.pageUrl })
+            h.onMedia?.(f.id, media)
+          } catch {
+            // No imagery is a fine outcome; a wrong image is not.
+          }
+        })
+      )
+    }
+
     // Pull the bytes now rather than when the user reaches each frame, so
     // later frames are already on disk by the time the story advances.
     void prefetch(chosen)
