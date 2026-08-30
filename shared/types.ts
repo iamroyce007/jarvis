@@ -256,7 +256,7 @@ export interface BriefingTimelineItem {
 
 export type FrameKind =
   | 'hero' | 'portrait' | 'evidence' | 'timeline' | 'conflict'
-  | 'quote' | 'stat' | 'place' | 'conclusion'
+  | 'quote' | 'stat' | 'place' | 'conclusion' | 'connections'
 
 export interface FrameMedia {
   image: string | null
@@ -368,6 +368,34 @@ export interface Fact {
   value: string
 }
 
+/**
+ * How a connection is actually supported. The distinction is the point: a
+ * shared organisation is not an association, and an association is not a
+ * relationship. Nothing displayed may claim more than its basis allows.
+ */
+export type Basis = 'documented' | 'shared-entity' | 'co-occurrence' | 'similarity-only'
+
+export interface Connection {
+  name: string
+  kind: EntityKind
+  basis: Basis
+  /** Entities the path runs through, excluding the endpoints. */
+  via: string[]
+  statement: string
+  sources: string[]
+  confidence: Confidence
+  /** Always true. Correlation is a lead for a person to check, never a finding. */
+  requiresReview: true
+}
+
+export interface Coverage {
+  facts: number
+  sources: number
+  reachable: number
+  images: number
+  entities: number
+}
+
 export interface ExplainSource {
   id: number
   title: string
@@ -393,6 +421,7 @@ export interface ExplainFrame {
   quote?: string
   attribution?: string
   timeline?: { date: string; label: string; detail?: string }[]
+  connections?: Connection[]
   media?: { image: string; credit: string; pageUrl: string; caption?: string }
 }
 
@@ -409,6 +438,7 @@ export interface Explanation {
   relatedSubjects: string[]
   at: number
   ms: number
+  coverage?: Coverage
   provisional?: boolean
   failure?: string
 }

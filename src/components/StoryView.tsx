@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Explanation, ExplainFrame, ExplainSource } from '../../shared/types'
+import type { Explanation, ExplainFrame, ExplainSource, Basis } from '../../shared/types'
 
 /**
  * The assembled explanation.
@@ -95,6 +95,15 @@ export function StoryView({ story, onClose, onInvestigate, onPresent }: Props) {
           <span className="st-headline">{story.headline}</span>
         </div>
         <div className="st-top-right">
+          {story.coverage ? (
+            <span className="st-coverage" title="What was actually gathered for this answer">
+              <b>{story.coverage.facts}</b> facts
+              <i />
+              <b>{story.coverage.reachable}</b>/{story.coverage.sources} sources verified
+              <i />
+              <b>{story.coverage.images}</b> images
+            </span>
+          ) : null}
           {onPresent ? (
             <button className="bar-btn" onClick={onPresent}>Present</button>
           ) : null}
@@ -336,6 +345,55 @@ function FrameView({
         </div>
       )
 
+    // §9 in visual form: every overlap carries the basis it rests on, and
+    // nothing is presented as a relationship unless a source states one.
+    case 'connections': {
+      const conns = frame.connections ?? []
+      return (
+        <div className="st-wide">
+          <div className="st-eyebrow">Correlation</div>
+          <h2>{frame.title}</h2>
+          <p className="st-lead">{frame.narration}</p>
+          <div className="st-conns">
+            {conns.map((c, i) => (
+              <div key={i} className={`st-conn basis-${c.basis}`}>
+                <div className="st-conn-head">
+                  <span className="st-conn-name">{c.name}</span>
+                  <span className="st-conn-kind">{c.kind}</span>
+                  <span className={`st-basis b-${c.basis}`}>{BASIS_LABEL[c.basis]}</span>
+                </div>
+                {c.via.length ? (
+                  <div className="st-conn-path">
+                    <span>{frame.subject ?? 'subject'}</span>
+                    {c.via.map((v) => (
+                      <span key={v} className="st-hop">{v}</span>
+                    ))}
+                    <span>{c.name}</span>
+                  </div>
+                ) : null}
+                <div className="st-conn-stmt">{c.statement}</div>
+                <div className="st-conn-foot">
+                  <span className="st-review">Requires investigator review</span>
+                  {c.sources.slice(0, 3).map((u) => (
+                    <a key={u} className="st-srcchip" href={u} target="_blank" rel="noreferrer">
+                      {hostOf(u)}
+                    </a>
+                  ))}
+                  <button className="sb-btn ghost" onClick={() => onInvestigate(c.name)}>
+                    Investigate
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="st-unresolved">
+            Overlap is a lead, not a relationship. None of the above establishes wrongdoing,
+            and absence of a link here means nothing has been recorded — not that none exists.
+          </div>
+        </div>
+      )
+    }
+
     case 'conclusion':
       return (
         <div className="st-wide">
@@ -375,6 +433,22 @@ function FrameView({
           </div>
         </div>
       )
+  }
+}
+
+/** What each basis is permitted to be called on screen. */
+const BASIS_LABEL: Record<Basis, string> = {
+  documented: 'Documented',
+  'shared-entity': 'Shared entity',
+  'co-occurrence': 'Same source only',
+  'similarity-only': 'Similarity only'
+}
+
+function hostOf(u: string): string {
+  try {
+    return new URL(u).hostname.replace(/^www\./, '')
+  } catch {
+    return u.slice(0, 24)
   }
 }
 

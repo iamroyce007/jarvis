@@ -54,6 +54,7 @@ import { showMeSubject, spotlight } from './intelligence/spotlight.js'
 import { routeIntent, needsResearch, type ViewIntent } from './intelligence/intent.js'
 import { project, isProjecting } from './intelligence/scenarios.js'
 import { setSessionTools, setNativeAvailability, toolRegistry } from './intelligence/tools.js'
+import { registerMediaScheme, installMediaProtocol } from './media/proxy.js'
 import {
   recordTurn,
   recentTurns,
@@ -313,9 +314,10 @@ function wireEvents(): void {
     }
 
     switch (intent.view) {
-      // A bare "show me" only needs the picture, so it takes the cheap path.
+      // A bare "show me" or portrait only needs the picture and bio, so it takes the fast path.
+      case 'portrait':
       case 'spotlight':
-        progress('Searching')
+        progress('Retrieving portrait')
         void spotlight(subject, { cwd: workspaceRoot, onProgress: progress }).then((s) =>
           send('spotlight', s)
         )
@@ -340,8 +342,7 @@ function wireEvents(): void {
         send('focus-view', { view: intent.view, subject })
         break
 
-      // Everything else assembles a full storyboard.
-      case 'portrait':
+      // Deep research intents assemble a full multi-frame storyboard.
       case 'event':
       case 'briefing':
       case 'presentation':
@@ -850,8 +851,13 @@ function registerIpc(): void {
   })
 }
 
+// Chromium freezes the scheme table at ready, so the media scheme is declared
+// here, at module scope, before anything else touches the app lifecycle.
+registerMediaScheme()
+
 app.whenReady().then(async () => {
   app.setName('JARVIS')
+  installMediaProtocol()
 
   wireEvents()
   registerIpc()

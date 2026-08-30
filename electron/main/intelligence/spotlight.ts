@@ -1,4 +1,5 @@
 import { resolveFromWeb, type WebImage } from './webmedia.js'
+import { mediaUrl } from '../media/proxy.js'
 import { db } from '../store/db.js'
 import { log } from '../log.js'
 import type { Confidence } from '../store/graph.js'
@@ -129,14 +130,14 @@ export async function spotlight(
   return {
     subject,
     title: web.hero.title ?? web.pages[0]?.title ?? null,
-    image: web.hero.url,
+    image: mediaUrl(web.hero.url, web.hero.pageUrl),
     description: web.description,
     extract: web.extract,
     credit: web.hero.publisher,
     sourceUrl: web.hero.pageUrl,
     // Published by a real, checkable source, but secondary reporting.
     confidence: 'reported',
-    gallery: web.images.slice(1),
+    gallery: web.images.slice(1).map((i) => ({ ...i, url: mediaUrl(i.url, i.pageUrl) })),
     pages: web.pages
   }
 }

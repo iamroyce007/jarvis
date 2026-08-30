@@ -35,7 +35,7 @@ export interface Intent {
 
 /** Machine-directed language: never a research or media request. */
 const MACHINE =
-  /\b(my (mac|computer|screen|file|files|project|code|folder|desktop)|this (file|project|code|screen|window)|the (tests?|logs?|build|terminal|diff|commit|branch|errors?))\b/i
+  /\b(my (mac|computer|screen|file|files|project|code|folder|desktop)|this (file|project|code|screen|window)|the (tests?|logs?|build|terminal|diff|commit|branch|errors?)|(open|launch|close|quit|restart|switch to|focus|start|stop|run|kill|mute|unmute)\s+(imessage|imessages|messages|safari|chrome|slack|mail|terminal|finder|spotify|notes|code|cursor|app|apps|application|window))\b/i
 
 const PRONOUN_SUBJECT = /^(he|him|his|she|her|hers|they|them|their|it|its|that|this|the one|there)$/i
 
@@ -46,7 +46,7 @@ const ROUTES: { view: ViewIntent; re: RegExp }[] = [
   { view: 'presentation', re: /^(?:jarvis[,\s]+)?present (?:the )?(?:investigation|findings|briefing)(?:\s+(?:on|about)\s+(.+))?$/i },
 
   // How do you know — the evidence chain.
-  { view: 'evidence', re: /^(?:jarvis[,\s]+)?(?:how do you know|how (?:did|do) you (?:find|figure) (?:that|this) out|what(?:'s| is) your (?:evidence|source)|prove it|says who)(?:\s+(?:about|for)\s+(.+))?$/i },
+  { view: 'evidence', re: /^(?:jarvis[,\s]+)?(?:how do you know|how (?:did|do) you (?:find|figure) (?:that|this) out|what(?:'s| is) your (?:evidence|source)|prove it|says who)(?:\s+(?:that|this|it))?(?:\s+(?:about|for)\s+(.+))?$/i },
   { view: 'evidence', re: /^(?:jarvis[,\s]+)?show me (?:the )?(?:source|sources|evidence|proof|citation|citations)(?:\s+(?:for|on|about)\s+(.+))?$/i },
   { view: 'evidence', re: /^(?:jarvis[,\s]+)?why (?:do you|should i) (?:believe|trust) (?:that|this|it)$/i },
 
@@ -56,7 +56,7 @@ const ROUTES: { view: ViewIntent; re: RegExp }[] = [
   { view: 'changes', re: /^(?:jarvis[,\s]+)?since (?:the )?last time(?:\s+.*)?$/i },
 
   // Futures.
-  { view: 'scenario', re: /^(?:jarvis[,\s]+)?what (?:happens|comes) next(?:\s+(?:for|with)\s+(.+))?$/i },
+  { view: 'scenario', re: /^(?:jarvis[,\s]+)?what (?:happens|comes|could happen|might happen|will happen|could come|happens?) next(?:\s+(?:for|with|to)\s+(.+))?$/i },
   { view: 'scenario', re: /^(?:jarvis[,\s]+)?what (?:if|would happen if)\s+(.+)$/i },
   { view: 'scenario', re: /^(?:jarvis[,\s]+)?(?:where (?:is|does) (?:this|it) (?:going|head|lead)|how (?:does|will) (?:this|it) (?:play out|end))$/i },
   { view: 'scenario', re: /^(?:jarvis[,\s]+)?(?:project|projections?|scenarios?|possible futures?)(?:\s+(?:for|on|about)\s+(.+))?$/i },
@@ -72,22 +72,27 @@ const ROUTES: { view: ViewIntent; re: RegExp }[] = [
   { view: 'timeline', re: /^(?:jarvis[,\s]+)?(?:walk me through|how did we get) (?:the )?(?:timeline|here|there)(?:\s+(?:of|for)\s+(.+))?$/i },
   { view: 'timeline', re: /^(?:jarvis[,\s]+)?when (?:was|did)\s+(.+)$/i },
 
-  // Who — portrait.
-  { view: 'portrait', re: /^(?:jarvis[,\s]+)?who (?:is|was|are|were)\s+(.+)$/i },
-  { view: 'portrait', re: /^(?:jarvis[,\s]+)?who(?:'s| is)? (?:he|she|they|this|that|this person)$/i },
-  { view: 'portrait', re: /^(?:jarvis[,\s]+)?tell me about (?:this|the) person$/i },
+  // Who is / Show me / Picture / Portrait — fast single-frame spotlight view (instant <200ms)
+  { view: 'spotlight', re: /^(?:jarvis[,\s]+)?(?:show|display|pull|get|bring|give|put)\s*(?:me\s*)?(?:up\s+)?(?:a\s+|the\s+)?(?:picture|pictures|photo|photos|image|images|portrait|portraits|face|headshot)s?\s+(?:of|for|about)?\s*(.+)$/i },
+  { view: 'spotlight', re: /^(?:jarvis[,\s]+)?(?:show|display|pull up|bring up|put up)\s+(?:me\s+)?(.*)$/i },
+  // Order matters here. The anaphoric form is tested first, because the named
+  // rule below would otherwise capture the pronoun and research a person
+  // called "he".
+  { view: 'spotlight', re: /^(?:jarvis[,\s]+)?who(?:'s| is| was| are| were)?\s+(?:he|she|they|him|her|them|this|that|this person)$/i },
+  // A named "who is X" is a dossier request, not a request for a picture: the
+  // storyboard opens on the portrait regardless, and adds the record around it.
+  // The anaphoric form above stays on the fast portrait path, because "who is
+  // he?" mid-story wants an answer now, not a fresh investigation.
+  { view: 'briefing', re: /^(?:jarvis[,\s]+)?who\s+(?:is|was|are|were)\s+(.+)$/i },
+  { view: 'spotlight', re: /^(?:jarvis[,\s]+)?what does\s+(.+?)\s+look like$/i },
 
   // What happened — event.
   { view: 'event', re: /^(?:jarvis[,\s]+)?what happened(?:\s+(?:with|to|at|in|during)\s+(.+))?$/i },
   { view: 'event', re: /^(?:jarvis[,\s]+)?what(?:'s| is| was) (?:going on|the story)(?:\s+(?:with|about)\s+(.+))?$/i },
 
-  // Show me — media.
-  { view: 'spotlight', re: /^(?:jarvis[,\s]+)?(?:show|pull up|bring up|display|put up)\s+(?:me\s+)?(.*)$/i },
-  { view: 'spotlight', re: /^(?:jarvis[,\s]+)?what does\s+(.+?)\s+look like$/i },
-
-  // General research.
+  // Deep research / Briefing — explicit comprehensive investigations.
   { view: 'briefing', re: /^(?:jarvis[,\s]+)?(?:tell me|explain)\s+(?:everything |all |more )?about\s+(.+)$/i },
-  { view: 'briefing', re: /^(?:jarvis[,\s]+)?(?:research|investigate|look into|dig into|brief me on)\s+(.+)$/i },
+  { view: 'briefing', re: /^(?:jarvis[,\s]+)?(?:research|investigate|look into|dig into|brief me on|deep dive into)\s+(.+)$/i },
   { view: 'briefing', re: /^(?:jarvis[,\s]+)?(?:full |all )?(?:information|info|details|background|dossier|profile)\s+(?:on|about)\s+(.+)$/i }
 ]
 

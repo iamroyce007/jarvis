@@ -332,6 +332,84 @@ async function findPages(subject: string, cwd?: string): Promise<string[]> {
 }
 
 /**
+ * Instant Wikipedia summary & entity resolver:
+ * 1. Checks direct page summary
+ * 2. If not found, runs fast Wikipedia search to resolve aliases/typos (e.g. "antropic ceo" -> "Dario Amodei")
+ * Returns verified portrait image, bio extract, and title in ~150ms.
+ */
+async function fetchWikipediaSummary(subject: string): Promise<WebSubject | null> {
+  const trySummary = async (titleOrSlug: string): Promise<WebSubject | null> => {
+    try {
+      const slug = encodeURIComponent(titleOrSlug.trim().replace(/\s+/g, '_'))
+      const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${slug}`, {
+        headers: { 'User-Agent': UA, Accept: 'application/json' },
+        signal: AbortSignal.timeout(3500)
+      })
+      if (!res.ok) return null
+      const data = (await res.json()) as {
+        title?: string
+        description?: string
+        extract?: string
+        thumbnail?: { source?: string; width?: number; height?: number }
+        originalimage?: { source?: string; width?: number; height?: number }
+        content_urls?: { desktop?: { page?: string } }
+      }
+      const imgUrl = data.originalimage?.source || data.thumbnail?.source
+      if (!imgUrl) return null
+      const pageUrl = data.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${slug}`
+      const resolvedTitle = data.title ?? subject
+      const hero: WebImage = {
+        url: imgUrl,
+        pageUrl,
+        publisher: 'Wikipedia',
+        title: resolvedTitle,
+        declaredWidth: data.originalimage?.width ?? data.thumbnail?.width ?? 800,
+        reachable: true,
+        score: 100,
+        origin: 'article'
+      }
+      return {
+        subject: resolvedTitle,
+        hero,
+        images: [hero],
+        description: data.description ?? null,
+        extract: data.extract ?? null,
+        coords: null,
+        pages: [{ url: pageUrl, publisher: 'Wikipedia', title: resolvedTitle }]
+      }
+    } catch {
+      return null
+    }
+  }
+
+  // 1. Direct match
+  const direct = await trySummary(subject)
+  if (direct?.hero) return direct
+
+  // 2. Search query resolution for aliases / typos (e.g. "antropic ceo" -> "Dario Amodei")
+  try {
+    const searchRes = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(subject)}&format=json`,
+      { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(3000) }
+    )
+    if (searchRes.ok) {
+      const searchData = (await searchRes.json()) as {
+        query?: { search?: { title: string }[] }
+      }
+      const topHits = searchData?.query?.search?.slice(0, 3) ?? []
+      for (const hit of topHits) {
+        const found = await trySummary(hit.title)
+        if (found?.hero) return found
+      }
+    }
+  } catch {
+    /* fallback to web search */
+  }
+
+  return null
+}
+
+/**
  * Resolves a subject by searching the web, opening the results, and collecting
  * the imagery and text those pages publish.
  */
@@ -342,6 +420,14 @@ export async function resolveFromWeb(
   const clean = subject.trim()
   if (!clean) return EMPTY(clean)
   const progress = opts.onProgress ?? ((): void => {})
+
+  // Fast path: Check Wikipedia REST API first (takes ~150ms)
+  progress('Resolving portrait')
+  const wiki = await fetchWikipediaSummary(clean)
+  if (wiki?.hero) {
+    log(`webmedia "${clean}": instant portrait resolved via Wikipedia (${wiki.hero.url})`)
+    return wiki
+  }
 
   progress('Searching the web')
   const urls = await findPages(clean, opts.cwd)

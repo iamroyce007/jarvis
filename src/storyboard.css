@@ -815,31 +815,52 @@
 }
 .st-top-right { display: flex; gap: 8px; flex-shrink: 0; }
 
+/* The frame owns the whole stage. Content is centred in it rather than
+   stacked at the top, because a paragraph pinned to a corner of a dark screen
+   reads as a web page, not as something composed for the viewer. */
 .st-frame {
   position: relative; z-index: var(--z-frame); flex: 1; min-height: 0;
-  overflow-y: auto; padding: 6px 32px 10px;
+  overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 18px clamp(32px, 5vw, 76px) 18px;
   animation: slideUp var(--smooth) var(--ease) both;
 }
 
 .st-split {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 34px; align-items: center; min-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+  gap: clamp(32px, 4.5vw, 68px);
+  align-items: center;
+  width: 100%; margin: auto 0;
 }
-.st-wide { max-width: 920px; padding-top: 10px; }
+/* Text-only frames still get the full width of the stage, held to a readable
+   measure and centred, so the composition stays deliberate. */
+.st-wide {
+  width: 100%; max-width: 1180px; margin: auto auto;
+  display: flex; flex-direction: column; justify-content: center;
+}
 .st-body { min-width: 0; }
 
-.st-photo { margin: 0; animation: materialize var(--slow) var(--ease) both; }
+.st-photo { margin: 0; animation: materialize var(--slow) var(--ease) both; position: relative; }
 .st-photo img {
-  width: 100%; max-height: 58vh; object-fit: cover;
+  width: 100%; height: clamp(360px, 62vh, 720px); object-fit: cover; object-position: center 22%;
   border-radius: var(--r-lg); border: var(--hair) solid var(--glass-edge);
-  box-shadow: var(--shadow-xl);
+  box-shadow: var(--shadow-xl), 0 0 90px -30px rgba(80, 170, 255, 0.35);
+  display: block;
+}
+/* A faint scan of light across the plate, so a still photograph reads as a
+   surface inside the environment rather than an image pasted onto it. */
+.st-photo::after {
+  content: ''; position: absolute; inset: 0; border-radius: var(--r-lg);
+  pointer-events: none;
+  background: linear-gradient(190deg, rgba(120, 200, 255, 0.09), transparent 34%, transparent 76%, rgba(2, 5, 9, 0.5));
 }
 .st-photo figcaption { font-family: var(--mono); font-size: 8px; color: var(--ink-ghost); margin-top: 8px; line-height: 1.4; }
 .st-cap { display: block; color: var(--ink-faint); margin-bottom: 2px; }
 
 .st h1 { font-family: var(--font-display); font-size: clamp(26px, 3.4vw, 44px); line-height: 1.06; letter-spacing: -0.03em; margin: 0 0 14px; color: var(--white); font-weight: 600; }
 .st h2 { font-family: var(--font-display); font-size: clamp(19px, 2.4vw, 30px); line-height: 1.14; letter-spacing: -0.02em; margin: 0 0 12px; color: var(--white); font-weight: 500; }
-.st p { font-size: 13.5px; line-height: 1.65; color: var(--ink-soft); margin: 0; max-width: 58ch; user-select: text; }
+.st p { font-size: 15px; line-height: 1.65; color: var(--ink-soft); margin: 0; max-width: 58ch; user-select: text; }
 .st-lead { color: var(--ink); }
 .st-eyebrow { font-family: var(--mono); font-size: 9px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--cyan); margin-bottom: 10px; }
 .st-eyebrow.warn { color: var(--warn); }
@@ -848,14 +869,14 @@
 .st-facts { margin: 18px 0 0; display: grid; gap: 0; }
 .st-facts.tight { margin-top: 14px; }
 .st-fact {
-  display: grid; grid-template-columns: 120px 1fr; gap: 12px;
+  display: grid; grid-template-columns: 148px 1fr; gap: 18px;
   padding: 7px 0; border-bottom: var(--hair) solid rgba(100, 180, 255, 0.06);
 }
 .st-fact dt {
   font-family: var(--mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--ink-ghost); padding-top: 2px;
 }
-.st-fact dd { margin: 0; font-size: 12.5px; color: var(--ink); line-height: 1.5; user-select: text; }
+.st-fact dd { margin: 0; font-size: 14px; color: var(--ink); line-height: 1.5; user-select: text; }
 
 .st-statv { font-family: var(--font-display); font-size: clamp(52px, 9vw, 100px); line-height: 0.9; font-weight: 200; letter-spacing: -0.04em; color: var(--white); }
 .st-statu { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cyan); margin: 8px 0 16px; }
@@ -866,25 +887,47 @@
 }
 .st-cite { display: block; margin-top: 16px; padding-left: 24px; font-size: 12px; color: var(--ink-faint); font-style: normal; }
 
-.st-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 20px; }
+.st-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 30px; }
 .st-side {
   border: var(--hair) solid rgba(255, 180, 84, 0.2); border-left: 2px solid var(--warn);
   border-radius: var(--r-sm); background: rgba(255, 180, 84, 0.04);
   backdrop-filter: blur(8px); padding: 14px 14px;
 }
-.st-side-claim { font-size: 13px; color: var(--ink); line-height: 1.55; user-select: text; }
+.st-side-claim { font-size: 14.5px; color: var(--ink); line-height: 1.55; user-select: text; }
 .st-side-src { display: inline-block; margin-top: 10px; font-family: var(--mono); font-size: 9px; color: var(--ink-faint); text-decoration: none; }
 .st-side-src:hover { color: var(--cyan); }
 .st-unresolved { margin-top: 16px; font-size: 11px; color: var(--warn); opacity: 0.8; font-style: italic; }
 
-.st-tl { margin-top: 20px; }
-.st-tl-row { display: grid; grid-template-columns: 92px 22px 1fr; gap: 10px; animation: slideUp var(--smooth) var(--ease) both; }
-.st-tl-date { font-family: var(--mono); font-size: 10px; color: var(--cyan); text-align: right; padding-top: 3px; }
-.st-tl-rail { position: relative; display: flex; justify-content: center; }
-.st-tl-rail::before { content: ''; position: absolute; top: 0; bottom: -4px; width: 1px; background: var(--glass-edge); }
-.st-tl-rail span { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); margin-top: 6px; z-index: 1; box-shadow: 0 0 0 3px var(--void); }
-.st-tl-label { font-size: 12.5px; color: var(--ink); user-select: text; }
-.st-tl-detail { font-size: 11px; color: var(--ink-faint); margin-top: 3px; line-height: 1.55; padding-bottom: 16px; user-select: text; }
+/* A temporal surface read left to right, not a list of rows. The spine is a
+   single continuous line of light with the events suspended along it. */
+.st-tl {
+  margin-top: 34px; position: relative;
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr);
+  gap: 0; overflow-x: auto; padding-bottom: 14px;
+  scrollbar-width: thin;
+}
+.st-tl::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 26px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan-dim) 8%, var(--cyan-dim) 92%, transparent);
+  opacity: 0.55;
+}
+.st-tl-row {
+  position: relative; padding: 0 16px 0 0;
+  animation: slideUp var(--smooth) var(--ease) both;
+}
+.st-tl-date {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  color: var(--cyan); text-transform: uppercase; white-space: nowrap; margin-bottom: 9px;
+}
+.st-tl-rail { position: relative; height: 14px; display: block; }
+.st-tl-rail::before { content: none; }
+.st-tl-rail span {
+  position: absolute; left: 0; top: 1px;
+  width: 9px; height: 9px; border-radius: 50%; background: var(--cyan);
+  box-shadow: 0 0 0 4px var(--void), 0 0 16px var(--cyan-glow); z-index: 1;
+}
+.st-tl-label { user-select: text; font-size: 13.5px; color: var(--white); line-height: 1.3; margin-top: 4px; font-weight: 500; }
+.st-tl-detail { user-select: text; font-size: 11.5px; color: var(--ink-faint); line-height: 1.5; margin-top: 6px; max-width: 30ch; }
 
 .st-srcline { display: flex; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
 .st-srcchip {
@@ -1484,4 +1527,74 @@
   .pres-controls { padding-left: 20px; padding-right: 20px; }
   .person-overview-grid, .event-overview-grid { grid-template-columns: 1fr; gap: 20px; }
   .person-body, .event-body { padding: 10px 20px 16px; }
+}
+
+/* ══════════════════════════════════════════ PROVENANCE + CORRELATION */
+
+/* How much was actually gathered. Density is the claim this interface makes,
+   so it is stated plainly rather than implied by how full the screen looks. */
+.st-coverage {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-ghost);
+  padding: 4px 10px; border-radius: var(--r-xs);
+  border: var(--hair) solid var(--glass-edge); background: rgba(120, 190, 255, 0.03);
+}
+.st-coverage b { color: var(--cyan); font-weight: 500; }
+.st-coverage i { width: 1px; height: 9px; background: var(--glass-edge); display: inline-block; }
+
+.st-conns { display: grid; gap: 14px; margin-top: 28px; }
+
+/* The left edge carries the basis: the stronger the evidence, the brighter it
+   is. A "similarity only" card should never read as a finding at a glance. */
+.st-conn {
+  position: relative; padding: 16px 18px 14px 20px;
+  border: var(--hair) solid var(--glass-edge); border-radius: var(--r-md);
+  background: rgba(120, 190, 255, 0.022);
+  animation: slideUp var(--smooth) var(--ease) both;
+}
+.st-conn::before {
+  content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px;
+  border-radius: 2px; background: var(--ink-ghost);
+}
+.st-conn.basis-documented::before { background: var(--cyan); box-shadow: 0 0 12px var(--cyan-glow); }
+.st-conn.basis-shared-entity::before { background: var(--warn); opacity: 0.75; }
+.st-conn.basis-co-occurrence::before { background: var(--ink-faint); opacity: 0.6; }
+.st-conn.basis-similarity-only::before { background: var(--ink-ghost); opacity: 0.4; }
+
+.st-conn-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.st-conn-name { font-size: 16px; color: var(--white); font-weight: 500; }
+.st-conn-kind {
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-ghost);
+}
+.st-basis {
+  margin-left: auto; font-family: var(--mono); font-size: 8px;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: var(--r-xs); border: var(--hair) solid currentColor;
+}
+.st-basis.b-documented { color: var(--cyan); }
+.st-basis.b-shared-entity { color: var(--warn); }
+.st-basis.b-co-occurrence,
+.st-basis.b-similarity-only { color: var(--ink-ghost); }
+
+/* The path itself, as steps rather than as a diagram of dots and lines. */
+.st-conn-path {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; color: var(--ink-faint);
+}
+.st-conn-path > span {
+  padding: 3px 9px; border-radius: var(--r-xs);
+  border: var(--hair) solid var(--glass-edge); background: rgba(255, 255, 255, 0.015);
+}
+.st-conn-path > span + span::before {
+  content: '→'; margin-right: 9px; margin-left: -3px; color: var(--cyan-dim); border: none;
+}
+.st-conn-path .st-hop { color: var(--cyan-dim); }
+
+.st-conn-stmt { margin-top: 12px; font-size: 13.5px; line-height: 1.6; color: var(--ink-soft); user-select: text; }
+.st-conn-foot { display: flex; align-items: center; gap: 9px; margin-top: 14px; flex-wrap: wrap; }
+.st-review {
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--warn); opacity: 0.85;
 }

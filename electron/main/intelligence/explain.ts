@@ -3,6 +3,8 @@ import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { resolveClaudeBinary, enrichedPath } from '../claude/resolve.js'
 import { readPages, type PageContent, type PageImage } from './browser.js'
+import { mediaUrl, originalUrl, prefetch } from '../media/proxy.js'
+import { ingestExplanation, findConnections, type Connection } from './correlate.js'
 import { fastWorker, webWorker, type StructuredWorker } from './worker.js'
 import { db } from '../store/db.js'
 import { log } from '../log.js'
@@ -25,7 +27,7 @@ const execFileAsync = promisify(execFile)
 
 export type FrameKind =
   | 'hero' | 'portrait' | 'evidence' | 'timeline' | 'conflict'
-  | 'quote' | 'stat' | 'place' | 'conclusion' | 'facts'
+  | 'quote' | 'stat' | 'place' | 'conclusion' | 'facts' | 'connections'
 
 export interface Fact {
   label: string
@@ -38,6 +40,8 @@ export interface ExplainFrame {
   title: string
   narration: string
   subject?: string
+  /** What the subject is, as the research declared it. Absent when unsure. */
+  subjectKind?: string
   role?: string
   confidence: Confidence
   /** Indices into `sources`. */
@@ -49,6 +53,8 @@ export interface ExplainFrame {
   quote?: string
   attribution?: string
   timeline?: { date: string; label: string; detail?: string }[]
+  /** What the accumulated graph already knows that touches this subject. */
+  connections?: Connection[]
   media?: { image: string; credit: string; pageUrl: string; caption?: string }
 }
 
@@ -75,6 +81,8 @@ export interface Explanation {
   relatedSubjects: string[]
   at: number
   ms: number
+  /** How much was actually gathered, for the provenance strip. */
+  coverage?: { facts: number; sources: number; reachable: number; images: number; entities: number }
   /** True while this is the unverified sketch rather than researched output. */
   provisional?: boolean
   failure?: string
@@ -97,7 +105,7 @@ substance first, not decoration. Return ONLY minified JSON, no prose, no fence:
 
 {"headline":"","summary":"","kind":"person|event|organization|company|technology|place|concept",
  "facts":[{"label":"","value":""}],
- "frames":[{"kind":"","title":"","narration":"","subject":"","role":"","confidence":"",
+ "frames":[{"kind":"","title":"","narration":"","subject":"","subjectKind":"","role":"","confidence":"",
             "sources":[0],"facts":[{"label":"","value":""}],
             "sides":[{"claim":"","source":0}],"value":"","unit":"",
             "quote":"","attribution":"",
@@ -126,6 +134,9 @@ RULES:
 - narration is what JARVIS says aloud for that frame: one or two spoken
   sentences, conversational, no markdown.
 - "subject" must be a real searchable proper name, or omitted.
+- "subjectKind" classifies that subject: person, organization, company, event,
+  place, product, technology or concept. Omit it if you are not sure — a wrong
+  classification is worse than none.
 - NEVER invent a source. Every URL must be one you actually retrieved.
 - confidence: confirmed (multiple independent sources), corroborated (two),
   reported (one), inferred (your reasoning), disputed, unknown.
@@ -161,28 +172,44 @@ function publisherOf(url: string): string {
 
 const FRAME_KINDS: FrameKind[] = [
   'hero', 'portrait', 'evidence', 'timeline', 'conflict',
-  'quote', 'stat', 'place', 'conclusion', 'facts'
+  'quote', 'stat', 'place', 'conclusion', 'facts', 'connections'
 ]
 
 /** Junk that is never subject photography, checked against URL and alt text. */
-const JUNK = /(logo|icon|sprite|avatar|placeholder|default|spacer|pixel|favicon|banner|advert)/i
+const JUNK =
+  /(logo|icon|sprite|avatar|placeholder|default|spacer|pixel|favicon|banner|advert|1x1|blank|loading|share|subscribe|newsletter|paywall)/i
+
+/** Words that carry no identifying weight when matching a subject. */
+const STOP = new Set([
+  'the', 'and', 'for', 'from', 'with', 'his', 'her', 'their', 'was', 'were',
+  'inc', 'ltd', 'corp', 'company', 'group', 'city', 'state', 'university'
+])
+
+function subjectWords(subject: string): string[] {
+  return subject
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP.has(w))
+}
 
 /**
  * Picks the best photograph for a subject from everything the browser saw.
  *
- * Rendered dimensions beat declared ones, and a caption naming the subject is
- * the strongest signal that the photo actually depicts it.
+ * The hard rule is that at least one distinctive word of the subject must
+ * appear in the image's own caption, alt text or filename. Without it a page's
+ * unrelated sidebar thumbnails — Britannica happily offers "Migrant Mother"
+ * beside a Legasov article — score well on size alone and end up presented as
+ * a photograph of the subject. Showing the wrong face is worse than showing
+ * none, so an unmatched frame goes without.
  */
 function bestImage(
   pages: PageContent[],
   subject: string,
   used: Set<string>
 ): { image: string; credit: string; pageUrl: string; caption?: string } | null {
-  const words = subject
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length > 2)
+  const words = subjectWords(subject)
+  if (words.length === 0) return null
 
   let best: { img: PageImage; page: PageContent; score: number } | null = null
 
@@ -190,28 +217,51 @@ function bestImage(
     for (const img of page.images) {
       if (used.has(img.url) || JUNK.test(img.url)) continue
 
-      const hay = `${img.alt} ${img.caption}`.toLowerCase()
-      let score = 0
-      for (const w of words) if (hay.includes(w)) score += 25
-      // Real editorial photos are large and land near 3:2 or 4:3.
-      const area = img.width * img.height
-      if (area > 500_000) score += 12
-      else if (area > 200_000) score += 6
-      const ratio = img.width / Math.max(1, img.height)
-      if (ratio > 0.6 && ratio < 2.1) score += 4
-      if (img.caption.length > 20) score += 6
-      if (/getty|reuters|ap photo|afp|photograph/i.test(hay)) score += 8
-      // The publisher's share card is a last resort, never a first choice.
-      if (img.url === page.ogImage) score -= 10
+      // The filename is evidence too: Wikimedia encodes the subject in it.
+      let slug = ''
+      try {
+        slug = decodeURIComponent(new URL(img.url).pathname).toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+      } catch {
+        slug = img.url.toLowerCase()
+      }
+      const caption = `${img.alt} ${img.caption}`.toLowerCase()
+      const hay = `${caption} ${slug}`
 
-      if (score > 0 && (!best || score > best.score)) best = { img, page, score }
+      const matched = words.filter((w) => hay.includes(w)).length
+      // No name, no photograph. This is the safeguard, not an optimisation.
+      if (matched === 0) continue
+
+      let score = matched * 30
+      // Every word present, in the caption specifically, is near-certainty.
+      if (matched === words.length) score += 25
+      if (words.every((w) => caption.includes(w))) score += 20
+
+      // Resolution actually available, not the size the page chose to show.
+      const w = Math.max(img.width, img.maxWidth)
+      if (w >= 1200) score += 20
+      else if (w >= 800) score += 14
+      else if (w >= 500) score += 7
+      else if (w < 300 && !img.upgraded) score -= 12
+
+      const ratio = img.width / Math.max(1, img.height)
+      if (ratio > 0.55 && ratio < 2.2) score += 5
+      if (img.caption.length > 20) score += 8
+      if (/getty|reuters|ap photo|afp|photograph|epa|shutterstock|alamy/i.test(caption)) score += 10
+
+      // The publisher's share card is branded template art far more often than
+      // it is a photograph of the subject.
+      if (img.url === page.ogImage) score -= 18
+
+      if (!best || score > best.score) best = { img, page, score }
     }
   }
 
-  if (!best) return null
+  // A weak best is still a guess. Require real evidence before displaying.
+  if (!best || best.score < 30) return null
   used.add(best.img.url)
   return {
-    image: best.img.url,
+    // Proxied: the renderer's CSP refuses remote hosts by design.
+    image: mediaUrl(best.img.url, best.page.url),
     credit: publisherOf(best.page.url),
     pageUrl: best.page.url,
     caption: best.img.caption || best.img.alt || undefined
@@ -358,14 +408,25 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
   const progress = h.onProgress ?? ((): void => {})
 
   try {
+    // Research is the long pole, so it starts first and runs while the fast
+    // sketch is still being written. Awaiting the sketch before launching it
+    // cost three seconds of nothing happening on every single question.
+    progress('Searching sources')
+    web ??= webWorker(h.cwd ?? process.cwd())
+    const research = web.run(`${PROMPT}\n\n<SUBJECT>\n${subject}\n</SUBJECT>`, 180_000)
+    // A rejection here is handled at the await below; this keeps Node from
+    // treating it as unhandled in the window before then.
+    research.catch(() => undefined)
+
     // Fast unverified skeleton so something real is on screen in seconds.
     progress('Recalling')
     const quick = await sketch(subject, h.cwd)
-    if (quick) h.onStory?.(quick)
+    if (quick) {
+      progress('Searching sources')
+      h.onStory?.(quick)
+    }
 
-    progress('Searching sources')
-    web ??= webWorker(h.cwd ?? process.cwd())
-    const stdout = await web.run(`${PROMPT}\n\n<SUBJECT>\n${subject}\n</SUBJECT>`, 180_000)
+    const stdout = await research
 
     const parsed = parseJson<Record<string, unknown>>(stdout)
     if (!parsed) {
@@ -404,6 +465,7 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
         title: String(o.title ?? ''),
         narration: String(o.narration ?? ''),
         subject: o.subject ? String(o.subject) : undefined,
+        subjectKind: o.subjectKind ? String(o.subjectKind) : undefined,
         role: o.role ? String(o.role) : undefined,
         confidence: conf(o.confidence),
         sources: idxs(o.sources),
@@ -461,16 +523,61 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
     const used = new Set<string>()
     // Hero first so the opening frame gets the strongest photograph available.
     const ordered = [...frames].sort((a, b) => (a.kind === 'hero' ? -1 : b.kind === 'hero' ? 1 : 0))
+    const chosen: { url: string; pageUrl: string }[] = []
     for (const f of ordered) {
       if (!f.subject) continue
       const media = bestImage(pages, f.subject, used)
       if (media) {
         f.media = media
+        chosen.push({ url: originalUrl(media.image), pageUrl: media.pageUrl })
         h.onMedia?.(f.id, media)
       }
     }
+    // Pull the bytes now rather than when the user reaches each frame, so
+    // later frames are already on disk by the time the story advances.
+    void prefetch(chosen)
 
+    // ---- correlation: what does this touch that we already knew? ----
+    // Ingestion happens first so this subject's own entities are in the graph
+    // before it is queried; a subject that connects only to itself is not a
+    // finding, and `findConnections` excludes the subject for that reason.
+    progress('Correlating')
+    const ingested = ingestExplanation(story)
+    const connections = findConnections(subject, 6)
+
+    if (connections.length > 0) {
+      const frame: ExplainFrame = {
+        id: randomUUID(),
+        kind: 'connections',
+        title: 'What this touches',
+        narration:
+          `${connections.length} thing${connections.length === 1 ? '' : 's'} already on record ` +
+          `overlap with ${subject}. Each is shown with the basis it actually rests on.`,
+        // The frame asserts overlap, not relationship. Nothing here is stronger
+        // than the weakest link it is built from.
+        confidence: 'inferred',
+        sources: [],
+        connections
+      }
+      // Before the conclusion, so the assessment can account for it.
+      const at = frames.findIndex((f) => f.kind === 'conclusion')
+      if (at >= 0) frames.splice(at, 0, frame)
+      else frames.push(frame)
+      log(`correlate: ${connections.length} connections for "${subject}"`)
+    }
+
+    story.coverage = {
+      facts: facts.length + frames.reduce((n, f) => n + (f.facts?.length ?? 0), 0),
+      sources: sources.length,
+      reachable: sources.filter((s) => s.reachable).length,
+      images: frames.filter((f) => f.media).length,
+      entities: ingested.entities
+    }
     story.ms = Date.now() - started
+
+    // Emit once more so the connections frame and provenance counts appear.
+    h.onStory?.(story)
+
     db.prepare('INSERT INTO explanations (id, subject, at, payload) VALUES (?, ?, ?, ?)').run(
       story.id,
       subject,
@@ -479,7 +586,8 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
     )
     log(
       `explain "${subject}": complete in ${story.ms}ms, ` +
-        `${frames.filter((f) => f.media).length}/${frames.length} frames with imagery`
+        `${frames.filter((f) => f.media).length}/${frames.length} frames with imagery, ` +
+        `${connections.length} connections`
     )
     return story
   } catch (err) {
@@ -503,3 +611,6 @@ export function getExplanation(id: string): Explanation | null {
     | undefined
   return row ? (JSON.parse(row.payload) as Explanation) : null
 }
+
+/** Exposed for the media-selection probe; not used by the app. */
+export const __pickForTest = bestImage

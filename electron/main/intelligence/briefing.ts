@@ -5,6 +5,7 @@ import { resolveClaudeBinary, enrichedPath } from '../claude/resolve.js'
 import { db } from '../store/db.js'
 import { log } from '../log.js'
 import { resolveFromWeb } from './webmedia.js'
+import { mediaUrl } from '../media/proxy.js'
 import type { Confidence } from '../store/graph.js'
 
 const execFileAsync = promisify(execFile)
@@ -252,7 +253,7 @@ async function verifySource(src: BriefingSource): Promise<BriefingSource> {
         image = null
       }
     }
-    return { ...src, reachable: true, image }
+    return { ...src, reachable: true, image: image ? mediaUrl(image, src.url) : null }
   } catch {
     return { ...src, reachable: false, image: null }
   }
@@ -449,7 +450,7 @@ export async function research(
       const w = f.subject ? resolved[f.subject] : undefined
       if (w?.hero) {
         f.media = {
-          image: w.hero.url,
+          image: mediaUrl(w.hero.url, w.hero.pageUrl),
           credit: w.hero.publisher,
           sourceUrl: w.hero.pageUrl,
           description: w.description
@@ -461,7 +462,7 @@ export async function research(
     const heroWeb = resolved[subject]
     if (heroWeb?.hero) {
       briefing.hero = {
-        image: heroWeb.hero.url,
+        image: mediaUrl(heroWeb.hero.url, heroWeb.hero.pageUrl),
         credit: heroWeb.hero.publisher,
         sourceUrl: heroWeb.hero.pageUrl,
         description: heroWeb.description
