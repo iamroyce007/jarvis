@@ -28,6 +28,8 @@ export interface SweepReport {
   explanations: number
   briefings: number
   usageRows: number
+  transcriptTurns: number
+  errorRows: number
 }
 
 const HOUR = 60 * 60 * 1000
@@ -41,6 +43,16 @@ const MEDIA_MAX_AGE = 7 * DAY
 const STORY_MAX_AGE = 30 * DAY
 /** Token accounting. Kept longer because it is tiny and useful over time. */
 const USAGE_MAX_AGE = 90 * DAY
+/**
+ * The spoken transcript.
+ *
+ * Everything the user has ever said out loud in front of this machine, in
+ * plain text and full-text indexed. It had no expiry at all, which makes it
+ * the most sensitive thing JARVIS stores and the least justified to keep.
+ */
+const TRANSCRIPT_MAX_AGE = Number(process.env.JARVIS_TRANSCRIPT_TTL_MS ?? 30 * DAY)
+/** Diagnostics. Two thousand rows had accumulated with nothing collecting them. */
+const ERROR_MAX_AGE = 7 * DAY
 /** The log is truncated rather than deleted, so the current run keeps writing. */
 const LOG_MAX_BYTES = 2 * 1024 * 1024
 
@@ -132,7 +144,9 @@ export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
     logBytes: 0,
     explanations: 0,
     briefings: 0,
-    usageRows: 0
+    usageRows: 0,
+    transcriptTurns: 0,
+    errorRows: 0
   }
 
   // --- screenshots: shortest leash, because of what they can contain -------
@@ -173,6 +187,21 @@ export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
   report.explanations = pruneTable('explanations', 'at', opts.aggressive ? 0 : STORY_MAX_AGE)
   report.briefings = pruneTable('briefings', 'at', opts.aggressive ? 0 : STORY_MAX_AGE)
   report.usageRows = pruneTable('usage', 'at', opts.aggressive ? 0 : USAGE_MAX_AGE)
+  report.errorRows = pruneTable('errors', 'at', opts.aggressive ? 0 : ERROR_MAX_AGE)
+
+  // The transcript is mirrored into an FTS index, which does not follow a
+  // DELETE on the base table on its own.
+  report.transcriptTurns = pruneTable('turns', 'at', opts.aggressive ? 0 : TRANSCRIPT_MAX_AGE)
+  if (report.transcriptTurns > 0) {
+    try {
+      db.exec(
+        `DELETE FROM turns_fts WHERE rowid NOT IN (SELECT id FROM turns);
+         INSERT INTO turns_fts(turns_fts) VALUES('optimize');`
+      )
+    } catch {
+      /* the index rebuilds itself on next write */
+    }
+  }
 
   try {
     // WAL had grown to three times the database itself.
@@ -185,7 +214,8 @@ export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
   log(
     `janitor: ${report.screenshots} screenshots, ${report.mediaFiles} cached images ` +
       `(${Math.round(report.mediaBytes / 1024 / 1024)}MB), ${report.explanations} stories, ` +
-      `${report.briefings} briefings, ${report.usageRows} usage rows` +
+      `${report.briefings} briefings, ${report.transcriptTurns} transcript turns, ` +
+      `${report.errorRows} error rows, ${report.usageRows} usage rows` +
       (report.logBytes ? `, log truncated (${Math.round(report.logBytes / 1024)}KB)` : '')
   )
   return report
