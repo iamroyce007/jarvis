@@ -37,8 +37,19 @@ const DAY = 24 * HOUR
 
 /** Screenshots older than this go. Deliberately short: they are sensitive. */
 const SCREENSHOT_MAX_AGE = Number(process.env.JARVIS_SCREENSHOT_TTL_MS ?? 30 * 60 * 1000)
-/** Cached remote images. Long enough that revisiting a story is still instant. */
-const MEDIA_MAX_AGE = 7 * DAY
+/**
+ * Cached remote images.
+ *
+ * Two days rather than seven. These are other publishers' photographs held on
+ * this machine, and the reason to keep them at all is that revisiting a story
+ * within the same sitting should be instant — a purpose that a couple of days
+ * serves as well as a week. Anything older gets refetched, which also means a
+ * picture that has since been corrected or withdrawn is not served forever.
+ */
+const MEDIA_MAX_AGE = Number(process.env.JARVIS_MEDIA_TTL_MS ?? 2 * DAY)
+
+/** Hard ceiling on the cache regardless of age. */
+const MEDIA_MAX_BYTES = Number(process.env.JARVIS_MEDIA_MAX_BYTES ?? 250 * 1024 * 1024)
 /** Stored research. Beyond this it is stale enough to be worth re-running. */
 const STORY_MAX_AGE = 30 * DAY
 /** Token accounting. Kept longer because it is tiny and useful over time. */
@@ -105,6 +116,44 @@ function sweepDir(
   return { count, bytes }
 }
 
+/** Evicts oldest-first until a directory is under a byte ceiling. */
+function trimToSize(dir: string, maxBytes: number): { count: number; bytes: number } {
+  let count = 0
+  let bytes = 0
+  if (!existsSync(dir)) return { count, bytes }
+  try {
+    const files = readdirSync(dir)
+      .map((name) => {
+        try {
+          const st = statSync(join(dir, name))
+          return st.isFile() ? { name, size: st.size, mtime: st.mtimeMs } : null
+        } catch {
+          return null
+        }
+      })
+      .filter((f): f is { name: string; size: number; mtime: number } => f !== null)
+
+    let total = files.reduce((n, f) => n + f.size, 0)
+    if (total <= maxBytes) return { count, bytes }
+
+    files.sort((a, b) => a.mtime - b.mtime)
+    for (const f of files) {
+      if (total <= maxBytes) break
+      try {
+        unlinkSync(join(dir, f.name))
+        total -= f.size
+        count += 1
+        bytes += f.size
+      } catch {
+        /* already gone */
+      }
+    }
+  } catch {
+    /* unreadable */
+  }
+  return { count, bytes }
+}
+
 /**
  * Deletes every screenshot immediately, regardless of age.
  *
@@ -160,6 +209,12 @@ export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
   const media = sweepDir(mediaDir(), /./, opts.aggressive ? 0 : MEDIA_MAX_AGE)
   report.mediaFiles = media.count
   report.mediaBytes = media.bytes
+
+  // Age alone does not bound the cache: a heavy afternoon of research can put
+  // hundreds of megabytes on disk well inside the age limit. Oldest first.
+  const overflow = trimToSize(mediaDir(), MEDIA_MAX_BYTES)
+  report.mediaFiles += overflow.count
+  report.mediaBytes += overflow.bytes
 
   // --- the log -------------------------------------------------------------
   try {

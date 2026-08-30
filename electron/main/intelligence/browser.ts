@@ -19,6 +19,10 @@ import { log } from '../log.js'
  * their real browser profile.
  */
 
+/** Text a site shows on a missing page while still returning HTTP 200. */
+const SOFT_404 =
+  /\b(page not found|content is not available|404 error|no longer available|this page (has moved|does not exist)|we can'?t find|sorry,? (we )?(couldn'?t|could not) find)\b/i
+
 export interface PageImage {
   url: string
   alt: string
@@ -306,6 +310,19 @@ export async function readPages(urls: string[], concurrency = 4): Promise<PageCo
     Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker)),
     new Promise((r) => setTimeout(r, budgetMs + 8000))
   ])
+  // Soft 404s: a page that returns HTTP 200 while saying it has no content.
+  // Britannica does this, and it had been counting as a reachable source —
+  // which inflated the coverage strip and offered the page's unrelated
+  // sidebar imagery ("Migrant Mother" beside a Legasov article) as candidates.
+  for (const p of out) {
+    if (p.failure) continue
+    if (SOFT_404.test(p.text.slice(0, 400)) || (p.text.length < 250 && SOFT_404.test(p.title))) {
+      p.failure = 'page not found (soft 404)'
+      p.images = []
+      p.text = ''
+    }
+  }
+
   const ok = out.filter((p) => !p.failure && p.text.length > 200).length
   log(`browser: read ${ok}/${urls.length} pages in ${Date.now() - started}ms`)
   return out

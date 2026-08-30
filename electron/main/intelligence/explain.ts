@@ -5,6 +5,8 @@ import { resolveClaudeBinary, enrichedPath } from '../claude/resolve.js'
 import { readPages, type PageContent, type PageImage } from './browser.js'
 import { resolveFromWeb } from './webmedia.js'
 import { safetyClause, imageAllowed, pageAllowed, queryAllowed } from './safety.js'
+import { deepSearch } from './sources.js'
+import { extractRelevant } from './relevance.js'
 import { mediaUrl, originalUrl, prefetch } from '../media/proxy.js'
 import { ingestExplanation, findConnections, type Connection } from './correlate.js'
 import { fastWorker, webWorker, type StructuredWorker } from './worker.js'
@@ -84,7 +86,20 @@ export interface Explanation {
   at: number
   ms: number
   /** How much was actually gathered, for the provenance strip. */
-  coverage?: { facts: number; sources: number; reachable: number; images: number; entities: number }
+  coverage?: {
+    facts: number
+    sources: number
+    reachable: number
+    images: number
+    entities: number
+    /** Records found in the unindexed layer: filings, dockets, literature. */
+    deepRecords?: number
+    /** Registries that actually answered, for the provenance strip. */
+    registries?: string[]
+    /** Characters of scraped text kept after relevance filtering, and offered. */
+    relevantChars?: number
+    consideredChars?: number
+  }
   /** True while this is the unverified sketch rather than researched output. */
   provisional?: boolean
   /** Replayed from an earlier pass rather than researched again. */
@@ -478,6 +493,16 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
     // the Wikipedia route returns a verified portrait in well under a second.
     // Starting it here means the picture is usually on screen before the first
     // sentence is, which is the difference between waiting and watching.
+    // The unindexed layer runs alongside the surface search rather than after
+    // it. These are databases behind query forms — filings, dockets, the
+    // literature — so they answer in seconds and are the material a claim
+    // should actually rest on when it exists.
+    const deep = deepSearch(subject, { limit: 10 }).catch(() => ({
+      records: [],
+      consulted: [] as string[],
+      silent: [] as string[]
+    }))
+
     const heroImage = resolveFromWeb(subject, { cwd: h.cwd })
       .then((w) => w.hero)
       .catch(() => null)
@@ -598,6 +623,36 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
     )
     for (const s of sources) s.reachable = pages.some((p) => p.url === s.url && !p.failure)
 
+    // Only the passages actually about the subject are kept. A scraped page is
+    // twelve thousand characters of which most is furniture and the tail of an
+    // article that stopped being on topic; carrying all of it forward costs
+    // tokens and dilutes the story toward whatever the page discussed most.
+    const relevant = extractRelevant(pages, subject)
+    if (relevant.passages.length > 0) {
+      log(
+        `extract: kept ${relevant.kept} of ${relevant.considered} chars ` +
+          `(${Math.round((100 * relevant.kept) / Math.max(1, relevant.considered))}%) ` +
+          `from ${relevant.contributing.length} source(s)`
+      )
+    }
+
+    // Primary records join the source list, marked with the registry they came
+    // from so the interface can show that a claim rests on the filing rather
+    // than on coverage of it.
+    const deepResult = await deep
+    for (const rec of deepResult.records.slice(0, 6)) {
+      if (sources.some((s) => s.url === rec.url)) continue
+      sources.push({
+        title: rec.title,
+        url: rec.url,
+        publisher: `${rec.publisher} · ${rec.registry}`,
+        reachable: true
+      } as (typeof sources)[number])
+    }
+    if (deepResult.consulted.length > 0) {
+      log(`deep layer: ${deepResult.records.length} records via ${deepResult.consulted.join(', ')}`)
+    }
+
     const used = new Set<string>()
     const preresolved = await heroImage
     if (preresolved) used.add(preresolved.url)
@@ -706,7 +761,11 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
       sources: sources.length,
       reachable: sources.filter((s) => s.reachable).length,
       images: frames.filter((f) => f.media).length,
-      entities: ingested.entities
+      entities: ingested.entities,
+      deepRecords: deepResult.records.length,
+      registries: deepResult.consulted,
+      relevantChars: relevant.kept,
+      consideredChars: relevant.considered
     }
     story.ms = Date.now() - started
 

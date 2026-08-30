@@ -394,6 +394,13 @@ export interface Coverage {
   reachable: number
   images: number
   entities: number
+  /** Records found in the unindexed layer: filings, dockets, literature. */
+  deepRecords?: number
+  /** Registries that actually answered, for the provenance strip. */
+  registries?: string[]
+  /** Characters of scraped text kept after relevance filtering, and offered. */
+  relevantChars?: number
+  consideredChars?: number
 }
 
 export interface ExplainSource {
