@@ -440,5 +440,7 @@ export interface Explanation {
   ms: number
   coverage?: Coverage
   provisional?: boolean
+  /** Replayed from an earlier pass rather than researched again. */
+  cached?: boolean
   failure?: string
 }

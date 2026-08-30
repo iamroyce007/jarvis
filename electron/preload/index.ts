@@ -17,6 +17,9 @@ const api = {
   openVoiceSettings: (pane: 'SpeechRecognition' | 'Microphone' | 'Dictation'): Promise<void> =>
     ipcRenderer.invoke('voice:open-settings', pane),
 
+  sweep: (aggressive?: boolean) => ipcRenderer.invoke('maintenance:sweep', aggressive),
+  purgeScreenshots: () => ipcRenderer.invoke('maintenance:purge-screenshots'),
+  budgetState: () => ipcRenderer.invoke('budget:state'),
   newSession: (): Promise<SessionInfo> => ipcRenderer.invoke('claude:new-session'),
   setPersonality: (p: string): Promise<SessionInfo> =>
     ipcRenderer.invoke('claude:set-personality', p),

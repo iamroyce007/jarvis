@@ -123,6 +123,18 @@ export class Orchestrator extends EventEmitter {
     })
 
     this.voice.on('partial', (text) => {
+      // Cutting JARVIS off has to happen on the *partial*, not the final.
+      // A final transcript needs the VAD to close the utterance first — half a
+      // second of silence, then recognition latency — so waiting for one meant
+      // saying "stop" and then listening to another sentence and a half. This
+      // fires the moment the recogniser has the word.
+      if ((this.voice.speaking || this.turnInFlight) && Orchestrator.isStopPhrase(text)) {
+        this.pushTranscript('user', text)
+        this.halt()
+        this.setState(this.conversationMode ? 'LISTENING' : 'IDLE')
+        return
+      }
+
       const now = Date.now()
       if (now - this.partialAt < 120) return
       this.partialAt = now
@@ -293,6 +305,21 @@ export class Orchestrator extends EventEmitter {
    * explicitly *not* low — only a real, non-zero-but-poor score triggers a
    * confirmation. Acting on a misheard command is worse than asking once.
    */
+  /**
+   * Words that mean "stop talking", recognised mid-utterance.
+   *
+   * Anchored at the start and capped at four words: this runs against a
+   * partial transcript while JARVIS is mid-answer, so a loose match would
+   * abort the turn every time the user said "stop" inside a normal sentence.
+   * "Stop the build" is a request; "stop" on its own is an interruption.
+   */
+  private static readonly STOP_PHRASE =
+    /^\s*(?:jarvis[,\s]+)?(stop|stop it|stop talking|shut up|shush|quiet|be quiet|silence|enough|that'?s enough|ok(?:ay)? stop|never ?mind|nevermind|forget it|cancel|cancel that|abort|halt|wait|hold on|hang on|shut it|no no|drop it|move on|skip it)\s*$/i
+
+  private static isStopPhrase(text: string): boolean {
+    return Orchestrator.STOP_PHRASE.test(text.trim().replace(/[.!?,]+$/, ''))
+  }
+
   private static readonly LOW_CONFIDENCE = 0.35
 
   /** A request held back because the transcript was uncertain. */
@@ -421,7 +448,7 @@ export class Orchestrator extends EventEmitter {
       this.setState('EMERGENCY_HALT')
       return true
     }
-    if (/^(stop|quiet|silence|shut up|never ?mind|cancel that|wait)$/.test(t)) {
+    if (Orchestrator.isStopPhrase(t)) {
       this.bargeIn()
       return true
     }

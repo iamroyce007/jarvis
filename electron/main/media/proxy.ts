@@ -22,6 +22,8 @@ import { log } from '../log.js'
  * the second view of a story paints from disk instantly.
  */
 
+import { imageAllowed } from '../intelligence/safety.js'
+
 const SCHEME = 'jarvis-media'
 
 /** Must run before `app.whenReady()`; Chromium locks the scheme table after. */
@@ -220,6 +222,13 @@ export function installMediaProtocol(): void {
 
     if (!/^https?:\/\//i.test(remote)) {
       return new Response(BLANK, { status: 400, headers: { 'Content-Type': 'image/png' } })
+    }
+
+    // Last line of defence. Everything upstream filters too, but this is the
+    // one place every displayed image must pass through, so a candidate that
+    // slipped past a scorer still never gets fetched.
+    if (!imageAllowed(remote, '', referrer ?? '')) {
+      return new Response(BLANK, { status: 200, headers: { 'Content-Type': 'image/png' } })
     }
 
     let job = inFlight.get(remote)

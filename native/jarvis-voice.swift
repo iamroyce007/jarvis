@@ -44,7 +44,38 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
             let all = AVSpeechSynthesisVoice.speechVoices()
             self.voice = all.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
                 ?? all.first { $0.identifier == name }
+                ?? Speaker.bestAvailable(all)
                 ?? self.voice
+        } else {
+            self.voice = Speaker.bestAvailable(AVSpeechSynthesisVoice.speechVoices()) ?? self.voice
+        }
+    }
+
+    /// Picks the best-sounding installed English voice.
+    ///
+    /// Quality is the thing people actually notice, and it is entirely a
+    /// function of which variant is downloaded: the default `.compact` voices
+    /// are the flat robotic ones, while `.premium` and `.enhanced` are close to
+    /// natural speech. Sorting by quality first and only then by name means a
+    /// user who downloads a Premium voice gets it automatically, without
+    /// changing any configuration.
+    static func bestAvailable(_ all: [AVSpeechSynthesisVoice]) -> AVSpeechSynthesisVoice? {
+        // Warm, conversational voices first — the ones that do not sound like
+        // an announcement system.
+        let preferred = ["Ava", "Zoe", "Evan", "Nathan", "Serena", "Samantha",
+                         "Jamie", "Tom", "Allison", "Susan", "Daniel", "Karen"]
+        func qualityRank(_ v: AVSpeechSynthesisVoice) -> Int {
+            if #available(macOS 13.0, *), v.quality == .premium { return 0 }
+            return v.quality == .enhanced ? 1 : 2
+        }
+        let english = all.filter { $0.language.hasPrefix("en") }
+        guard !english.isEmpty else { return nil }
+        return english.min { a, b in
+            let qa = qualityRank(a), qb = qualityRank(b)
+            if qa != qb { return qa < qb }
+            let pa = preferred.firstIndex { a.name.hasPrefix($0) } ?? preferred.count
+            let pb = preferred.firstIndex { b.name.hasPrefix($0) } ?? preferred.count
+            return pa < pb
         }
     }
 
@@ -58,6 +89,13 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
         currentId = id
         stopping = false
         synth.speak(utt)
+    }
+
+    /// The voice actually in use, for reporting back to the app.
+    var selected: [String: Any] {
+        guard let v = voice else { return ["name": "system default", "quality": "default"] }
+        let q = v.quality == .premium ? "premium" : (v.quality == .enhanced ? "enhanced" : "default")
+        return ["name": v.name, "id": v.identifier, "lang": v.language, "quality": q]
     }
 
     /// Barge-in: cut speech off immediately, dropping anything queued.
@@ -183,7 +221,18 @@ func preferredInputDevice() -> (id: AudioDeviceID, name: String, isBuiltIn: Bool
 }
 
 final class Listener {
-    private let engine = AVAudioEngine()
+    /// Deliberately a `var`, and replaced rather than restarted.
+    ///
+    /// An `AVAudioEngine` negotiates its input format once. When the hardware
+    /// format changes underneath it — which is exactly what AirPods do when
+    /// opening the mic drops them from A2DP into the HFP headset profile — the
+    /// instance is left holding a format the graph will no longer accept, and
+    /// every subsequent `start()` throws -10868 forever. Waiting does not help,
+    /// because the route has already settled; the object is what is stale.
+    /// `reset()` is not the answer either: it tears down the input node's
+    /// negotiated format and produces the same error. Only a new instance
+    /// renegotiates cleanly.
+    private var engine = AVAudioEngine()
     private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
@@ -206,6 +255,12 @@ final class Listener {
     private var currentLocale = "en-IN"
     /// Consecutive transient engine-start failures, for backoff.
     private var startAttempts = 0
+    /// Identifies the newest pending restart, so coalesced route changes only
+    /// act once. Opening a Bluetooth mic *causes* a route change, so an
+    /// unguarded restart-on-change chases the switch it just triggered and
+    /// livelocks — which is precisely what happened: five retries, a failure,
+    /// a watchdog restart, and around again indefinitely.
+    private var restartToken = UUID()
 
     /// Apple's on-device model is markedly less accurate than the server one,
     /// especially for names and non-US accents. Off by default; the caller
@@ -282,6 +337,13 @@ final class Listener {
         }
         recognizer = rec
 
+        // A fresh engine for every attempt. See the declaration above: reusing
+        // one across a format change is the whole reason the microphone died.
+        NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine)
+        if engine.isRunning { engine.stop() }
+        engine.inputNode.removeTap(onBus: 0)
+        engine = AVAudioEngine()
+
         let req = makeRequest(rec)
         request = req
 
@@ -326,12 +388,6 @@ final class Listener {
             return
         }
 
-        // Stop a running engine before re-tapping, but do NOT reset() it:
-        // reset tears down the input node's negotiated format, after which the
-        // next start fails with FormatNotSupported (-10868) on devices whose
-        // hardware format differs from the default, such as Bluetooth mics.
-        if engine.isRunning { engine.stop() }
-
         input.removeTap(onBus: 0)
         // Passing nil lets the engine use the node's own format at the moment the
         // tap is created. Handing it a format read a few lines earlier races with
@@ -355,11 +411,20 @@ final class Listener {
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
             guard let self = self, self.running else { return }
-            emit(["type": "warn", "where": "audio", "message": "Audio device changed; restarting capture."])
             let locale = self.currentLocale
             self.stop()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-                self?.start(locale: locale)
+
+            // Bluetooth profile switches emit several of these in a burst, and
+            // restarting on the first one re-opens the mic mid-switch and
+            // triggers the next. Only the newest pending restart survives, and
+            // it waits long enough for the route to finish moving.
+            let token = UUID()
+            self.restartToken = token
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self = self, self.restartToken == token else { return }
+                emit(["type": "warn", "where": "audio",
+                      "message": "Audio route changed; reopening the microphone."])
+                self.start(locale: locale)
             }
         }
 
@@ -378,14 +443,20 @@ final class Listener {
             // reported as a dead microphone.
             let code = (error as NSError).code
             let transient = code == -10868 || code == -10851 || code == 561_017_449
-            if transient && startAttempts < 5 {
+            if transient && startAttempts < 6 {
                 startAttempts += 1
-                let delay = 0.4 * Double(startAttempts)
+                // A Bluetooth profile switch takes the better part of a second,
+                // and each attempt itself nudges the route. Backing off gently
+                // meant six failures inside three seconds and no recovery.
+                let delay = min(4.0, 0.6 * pow(1.7, Double(startAttempts - 1)))
                 emit(["type": "warn", "where": "stt",
                       "message": "Audio device busy (\(code)); retrying in \(String(format: "%.1f", delay))s."])
                 engine.stop()
+                let token = UUID()
+                self.restartToken = token
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    self?.start(locale: locale)
+                    guard let self = self, self.restartToken == token else { return }
+                    self.start(locale: locale)
                 }
                 return
             }
@@ -466,8 +537,12 @@ final class Listener {
         // Server-side recognition handles accents, slang and proper nouns far
         // better. Only pinned on-device when explicitly requested.
         req.requiresOnDeviceRecognition = forceOnDevice && rec.supportsOnDeviceRecognition
-        // Free-form beats .dictation for conversational speech and slang.
-        req.taskHint = .unspecified
+        // `.dictation` is tuned for continuous spoken sentences, which is what
+        // this actually receives. `.unspecified` was leaving the recogniser to
+        // guess, and it guessed "short command" — clipping longer utterances
+        // and mangling proper nouns that a dictation model resolves from the
+        // surrounding words.
+        req.taskHint = .dictation
         req.addsPunctuation = true
         if !contextualStrings.isEmpty {
             req.contextualStrings = Array(contextualStrings.prefix(100))
@@ -642,6 +717,9 @@ func handle(_ cmd: [String: Any]) {
         )
         if let onDevice = cmd["onDevice"] as? Bool { listener.forceOnDevice = onDevice }
         if let hints = cmd["contextualStrings"] as? [String] { listener.contextualStrings = hints }
+        var sel = speaker.selected
+        sel["type"] = "voice_selected"
+        emit(sel)
         emit(["type": "configured"])
 
     case "voices":

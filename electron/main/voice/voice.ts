@@ -17,6 +17,7 @@ type Events = {
   ttsStart: [string]
   ttsEnd: [{ id: string; cancelled: boolean }]
   inputDevice: [string]
+  voiceSelected: [{ name: string; quality: string; lang?: string }]
   listening: [boolean]
   /** Fires when the whole spoken queue has drained naturally. */
   spokenAll: []
@@ -154,6 +155,13 @@ export class VoiceController extends EventEmitter {
         }
         break
       }
+      case 'voice_selected':
+        this.emit('voiceSelected', {
+          name: String(m.name ?? 'unknown'),
+          quality: String(m.quality ?? 'default'),
+          lang: m.lang ? String(m.lang) : undefined
+        })
+        break
       case 'input_device':
         this.emit('inputDevice', String(m.name ?? 'unknown'))
         break
@@ -200,12 +208,20 @@ export class VoiceController extends EventEmitter {
   }
 
   /** Queue a sentence. Speaks immediately when idle, otherwise waits its turn. */
-  speak(text: string): void {
-    if (this.muted) return
+  /**
+   * Queues speech. Returns the utterance id, or null when nothing was queued
+   * (muted, or the text was empty once stripped), so a caller that needs to
+   * wait for this specific utterance can tell the difference between "wait for
+   * `ttsEnd`" and "there is nothing to wait for".
+   */
+  speak(text: string): string | null {
+    if (this.muted) return null
     const clean = stripForSpeech(text)
-    if (!clean) return
-    this.queue.push({ id: randomUUID(), text: clean })
+    if (!clean) return null
+    const id = randomUUID()
+    this.queue.push({ id, text: clean })
     if (!this.speakingId) this.dequeue()
+    return id
   }
 
   private dequeue(): void {

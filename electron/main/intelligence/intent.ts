@@ -34,8 +34,25 @@ export interface Intent {
 }
 
 /** Machine-directed language: never a research or media request. */
-const MACHINE =
-  /\b(my (mac|computer|screen|file|files|project|code|folder|desktop)|this (file|project|code|screen|window)|the (tests?|logs?|build|terminal|diff|commit|branch|errors?)|(open|launch|close|quit|restart|switch to|focus|start|stop|run|kill|mute|unmute)\s+(imessage|imessages|messages|safari|chrome|slack|mail|terminal|finder|spotify|notes|code|cursor|app|apps|application|window))\b/i
+const MACHINE = new RegExp(
+  [
+    // Anything possessive about this machine.
+    String.raw`\bmy (mac|macbook|computer|screen|desktop|files?|folders?|project|code|repo|inbox|mail|email|calendar|music|photos?|downloads?|documents?)\b`,
+    String.raw`\bthis (file|project|code|screen|window|app|repo|page|tab|error|line|function)\b`,
+    String.raw`\bthe (tests?|logs?|build|terminal|diff|commit|branch|errors?|repo|server|app|window|volume|brightness|wifi|bluetooth)\b`,
+    // Verbs that only ever mean "do it to this computer".
+    String.raw`\b(open|launch|close|quit|kill|restart|reboot|shut ?down|sleep|lock|switch to|focus|activate|minimi[sz]e|maximi[sz]e|hide)\s+`,
+    String.raw`\b(run|execute|build|compile|deploy|install|npm|git|brew|commit|push|pull request)\b`,
+    String.raw`\b(play|pause|skip|next track|previous track|volume|mute|unmute|turn (it )?(up|down))\b`,
+    String.raw`\b(screenshot|screen ?capture|take a (picture|shot) of (my|the) screen)\b`,
+    String.raw`\b(type|paste|copy|click|scroll|press|select all|save (it|this|the file))\b`,
+    String.raw`\b(send|reply|text|message|call|whatsapp|imessage|email)\s+(him|her|them|to|a|my)\b`,
+    // Reading the screen is a local action, not a research question.
+    String.raw`\bwhat (does )?(this|that|it) (say|mean|do)\b`,
+    String.raw`\b(fix|debug|check|read|explain)\s+(this|that|it)\b`
+  ].join('|'),
+  'i'
+)
 
 const PRONOUN_SUBJECT = /^(he|him|his|she|her|hers|they|them|their|it|its|that|this|the one|there)$/i
 
@@ -182,14 +199,24 @@ export function routeIntent(text: string): Intent {
   const informational = looksInformational(t)
   if (informational) return { view: 'briefing', subject: informational, inherited: false }
 
-  // Direct entity check: If the user inputs a proper name or subject directly (e.g. "Elon Musk", "Nvidia", "Quantum Computing")
-  if (!SMALL_TALK.test(t) && !MACHINE.test(t) && t.length >= 2 && t.length <= 100) {
-    // Exclude basic conversational phrases
-    const notDirectEntity = /^(can you|please|help|how to|why is|why does|where can)\b/i.test(t)
-    if (!notDirectEntity) {
-      return { view: 'briefing', subject: t, inherited: false }
-    }
-  }
+  // A bare subject — "Quantum Computing", "Nvidia", "the Osirak raid" — is a
+  // real request for a dossier, and it is the one thing the removal of the
+  // catch-all would otherwise have cost. It is safe to keep because it is
+  // recognised structurally rather than by exclusion: a noun phrase has no
+  // verb, no pronoun and no question in it. Every conversational sentence that
+  // used to be swept up here has at least one of the three.
+  const bare = bareSubject(t)
+  if (bare) return { view: 'briefing', subject: bare, inherited: false }
+
+  // Deliberately no catch-all beyond that.
+  //
+  // There used to be one: any two-to-a-hundred-character sentence that was not
+  // small talk became a `briefing`. That single line was the whole cost
+  // problem — "can you check something for me" launched a Sonnet web-research
+  // pass, so an ordinary conversation spent a fifth of a five-hour window in a
+  // few turns. A storyboard now needs a question that is actually shaped like
+  // one; everything else is answered by voice alone, which is what the user
+  // was asking for anyway.
 
   return { view: 'none', subject: null, inherited: false }
 }
@@ -211,6 +238,18 @@ function looksInformational(t: string): string | null {
   if (SMALL_TALK.test(t)) return null
   if (MACHINE.test(t)) return null
 
+  // A storyboard is expensive, so it is not the default for "anything with a
+  // question mark". The question has to be about the world *and* look like it
+  // wants a body of material behind it. Two gates, both of which must pass.
+
+  // Gate one: an opener that asks about a thing rather than about this machine.
+  if (!QUESTION_OPENERS.test(t) && !RESEARCH_VERB.test(t)) return null
+
+  // Gate two: questions that a sentence answers do not need an investigation.
+  // "how do I centre a div", "what's the capital of France", "is it raining" —
+  // all better spoken than illustrated.
+  if (TRIVIAL.test(t)) return null
+
   const subject = t
     .replace(/^(?:jarvis[,\s]+)?/i, '')
     .replace(
@@ -224,15 +263,53 @@ function looksInformational(t: string): string | null {
     .replace(/\?+$/, '')
     .trim()
 
-  if (subject.length < 2 || subject.length > 120) return null
-  // Requests to act on this machine are handled conversationally.
+  // A real subject is a noun phrase, not a clause. Anything long enough to
+  // contain its own verb is a conversation, not a dossier request.
+  if (subject.length < 3 || subject.length > 80) return null
+  if (subject.split(/\s+/).length > 8) return null
   if (/\b(my|this|that)\s+(mac|computer|screen|file|project|code|app|window)\b/i.test(subject)) {
     return null
   }
   return subject
 }
 
+/** Verbs that ask for a body of material, not an answer. */
+const RESEARCH_VERB =
+  /^(?:jarvis[,\s]+)?(research|investigate|look into|dig into|brief me|deep dive|profile|dossier|background on|everything about)\b/i
+
+/**
+ * Questions with a one-line answer.
+ *
+ * These reach the same openers as a real research question, so without this
+ * gate "how do I restart it" assembled a storyboard. Spoken answer only.
+ */
+const TRIVIAL =
+  /\b(how (do|can|would) (i|you|we)\b|how to\b|what time\b|what'?s the (time|date|weather)|remind me|should i\b|do you (think|know how|mind)|can you\b|could you\b|would you\b|help me\b|write (me )?a\b|summari[sz]e\b|translate\b)/i
+
 /** Whether this view needs a full research pass, or can be assembled locally. */
 export function needsResearch(view: ViewIntent): boolean {
   return view === 'briefing' || view === 'event' || view === 'presentation' || view === 'portrait'
+}
+
+/**
+ * A standalone noun phrase, or null.
+ *
+ * The test is grammatical, not statistical: anything containing a verb, a
+ * pronoun, a question word or a conjunction is a sentence someone said, not a
+ * topic they named.
+ */
+const NOT_A_NOUN_PHRASE =
+  /\b(i|you|we|it|he|she|they|me|my|your|our|this|that|is|are|was|were|be|am|do|does|did|can|could|should|would|will|have|has|had|get|got|make|go|going|want|need|like|think|know|tell|show|open|run|please|and|but|or|if|so|because|what|who|when|where|why|how)\b/i
+
+function bareSubject(t: string): string | null {
+  if (/[?!]/.test(t)) return null
+  if (SMALL_TALK.test(t) || MACHINE.test(t)) return null
+  const clean = t.replace(/^(?:jarvis[,\s]+)?/i, '').replace(/^the\s+/i, '').trim()
+  if (clean.length < 3 || clean.length > 60) return null
+  const words = clean.split(/\s+/)
+  if (words.length > 4) return null
+  if (NOT_A_NOUN_PHRASE.test(clean)) return null
+  // A single very short token is far more likely to be a misheard fragment.
+  if (words.length === 1 && clean.length < 4) return null
+  return clean
 }

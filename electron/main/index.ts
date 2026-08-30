@@ -52,6 +52,10 @@ import { research, recentBriefings, getBriefing, isBriefingRunning } from './int
 import { explain, isExplaining, recentExplanations, getExplanation, warmWorkers } from './intelligence/explain.js'
 import { showMeSubject, spotlight } from './intelligence/spotlight.js'
 import { routeIntent, needsResearch, type ViewIntent } from './intelligence/intent.js'
+import { budget, claimResearch, refundResearch } from './intelligence/budget.js'
+import { startJanitor, stopJanitor, sweep, purgeScreenshots } from './maintenance/janitor.js'
+import { Compactor } from './claude/compact.js'
+import { queryAllowed, gateCommand, unlock, lock, isUnlocked, REFUSAL } from './intelligence/safety.js'
 import { project, isProjecting } from './intelligence/scenarios.js'
 import { setSessionTools, setNativeAvailability, toolRegistry } from './intelligence/tools.js'
 import { registerMediaScheme, installMediaProtocol } from './media/proxy.js'
@@ -92,6 +96,15 @@ const claude = new ClaudeSessionManager({
   disallowedTools: DENYLIST,
   systemPromptAppend: buildSystemPrompt('JARVIS')
 })
+
+/**
+ * Keeps the conversation's context from growing all day.
+ *
+ * JARVIS never restarts on its own, so without this the history is re-sent in
+ * full on every turn and the cost of a question climbs steadily through the
+ * afternoon. This is `/compact`, applied automatically between turns.
+ */
+const compactor = new Compactor(claude)
 
 const voice = new VoiceController(nativeBinary())
 
@@ -289,8 +302,43 @@ function wireEvents(): void {
   // question, not from a mode the user has to pick. Everything runs alongside
   // the spoken answer so speech is never blocked by assembly.
   orchestrator.on('request', (text) => {
+    // The gate is opened and closed by voice only, and the instruction never
+    // reaches Claude or a search — it is consumed here.
+    const gate = gateCommand(text)
+    if (gate) {
+      if (gate === 'open') unlock()
+      else lock()
+      send('safe-search', { on: !isUnlocked() })
+      return
+    }
+
+    // Housekeeping and context control, spoken. Consumed here so they never
+    // cost a turn.
+    if (/^(?:jarvis[,\s]+)?(clean ?up|clear (?:the )?(?:cache|caches|logs?|screenshots?|history)|tidy up|forget (?:the )?screenshots?)\b/i.test(text.trim())) {
+      const r = sweep({ aggressive: /\b(all|everything|logs?|history)\b/i.test(text) })
+      voice.speak(
+        `Cleared ${r.screenshots} screenshots and ${r.mediaFiles} cached images.`
+      )
+      return
+    }
+    if (/^(?:jarvis[,\s]+)?(compact|compact (?:the )?context|start fresh|clear (?:your )?context|new session)\b/i.test(text.trim())) {
+      voice.speak('Compacting.')
+      void compactor.compactNow().then((did) => {
+        if (did) send('session', sessionInfo())
+      })
+      return
+    }
+
     const intent = routeIntent(text)
     if (intent.view === 'none' || !intent.subject) return
+
+    // Refuse before anything is searched, scraped, cached or logged.
+    if (!queryAllowed(intent.subject) || !queryAllowed(text)) {
+      log(`intent refused by content filter: "${intent.subject}"`)
+      send('brief-progress', { subject: intent.subject, stage: 'Blocked by content filter' })
+      voice.speak(REFUSAL)
+      return
+    }
 
     log(
       `intent: ${intent.view} · "${intent.subject}"` +
@@ -305,12 +353,30 @@ function wireEvents(): void {
     // emits the story as soon as it parses, then streams imagery in behind it.
     const runExplain = (): void => {
       if (isExplaining()) return
+
+      // A research pass is by far the most expensive thing JARVIS does. It has
+      // to ask before it spends, so a run of research-shaped questions cannot
+      // drain the five-hour window behind the user's back.
+      const claim = claimResearch()
+      if (!claim.ok) {
+        log(`explain skipped for "${subject}": ${claim.reason}`)
+        send('brief-progress', { subject, stage: 'Budget reached' })
+        send('budget', budget())
+        return
+      }
+
       void explain(subject, {
         cwd: workspaceRoot,
         onProgress: (stage) => send('brief-progress', { subject, stage }),
         onStory: (story) => send('story', story),
         onMedia: (frameId, media) => send('story-media', { frameId, media })
       })
+        .then((story) => {
+          // A cached or refused pass cost nothing; give the budget back.
+          if (story.cached || story.failure) refundResearch()
+          send('budget', budget())
+        })
+        .catch(() => refundResearch())
     }
 
     switch (intent.view) {
@@ -349,6 +415,14 @@ function wireEvents(): void {
         runExplain()
         break
     }
+  })
+
+  // Between turns, never during one: the orchestrator emits this after the
+  // spoken answer is complete, which is the only safe moment to swap sessions.
+  orchestrator.on('session', () => {
+    void compactor.maybeCompact().then((did) => {
+      if (did) send('session', sessionInfo())
+    })
   })
 
   orchestrator.on('activity', (a) => send('activity', a))
@@ -478,24 +552,82 @@ function wireEvents(): void {
     // Start listening as soon as we're allowed; no button press required.
     if (a.ok) {
       speechAuthorized = true
-      // Recognition accuracy depends heavily on matching the speaker's variety
-      // of English; this machine's Siri locale is en-IN.
-      voice.listen(process.env.JARVIS_LOCALE || 'en-IN')
-      orchestrator.enterConversation()
-      send('listening', true)
+
+      // The greeting is spoken *before* the microphone opens, and listening
+      // waits for it to finish.
+      //
+      // On Bluetooth headsets these two cannot overlap during start-up.
+      // Opening the mic drops AirPods from A2DP into the mono headset profile;
+      // speaking wants A2DP back. Doing both at once made the route change
+      // five times in thirteen seconds, and JARVIS was deaf throughout. Kept
+      // apart, the profile switches once and stays put.
+      //
+      // Barge-in still works after this: by then the route has settled, and
+      // interrupting is handled by cancelling speech rather than by reopening
+      // the input.
+      const beginListening = (): void => {
+        if (!speechAuthorized) return
+        // Recognition accuracy depends heavily on matching the speaker's
+        // variety of English; this machine's Siri locale is en-IN.
+        voice.listen(process.env.JARVIS_LOCALE || 'en-IN')
+        orchestrator.enterConversation()
+        send('listening', true)
+        log('listening started')
+      }
+
       // Confirms end to end that synthesis reaches the speakers.
-      voice.speak('Systems online.')
-      log('listening started + greeting queued')
+      const greetingId = voice.speak('Systems online.')
+      let opened = false
+      // Nothing was queued (muted, say), so there is nothing to wait for.
+      if (!greetingId) setTimeout(beginListening, 300)
+      const openOnce = (): void => {
+        if (opened) return
+        opened = true
+        // A short settle after the speaker goes quiet, so the mic does not
+        // open into the tail of the profile switching back.
+        setTimeout(beginListening, 700)
+      }
+      const onEnd = (e: { id: string }): void => {
+        if (e.id !== greetingId) return
+        voice.off('ttsEnd', onEnd)
+        openOnce()
+      }
+      if (greetingId) voice.on('ttsEnd', onEnd)
+      // If synthesis never reports back, JARVIS must not stay deaf forever.
+      setTimeout(() => {
+        voice.off('ttsEnd', onEnd)
+        openOnce()
+      }, 6000)
+      log('greeting queued; microphone opens once it finishes')
     }
   })
   voice.on('ready', () => {
     // Downloading a Premium voice (Settings › Accessibility › Spoken Content ›
     // Manage Voices) is a large quality jump; it is picked up here by name.
+    voice.on('voiceSelected', (v) => {
+      log(`tts voice: ${v.name} (${v.quality})`)
+      if (v.quality === 'default') {
+        // The compact voices are the flat robotic ones. Nothing in code can
+        // fix that — the good variants are a download — so say so once.
+        log(
+          'tts: only compact voices are installed. For a natural voice, open ' +
+            'System Settings › Accessibility › Spoken Content › System Voice › ' +
+            'Manage Voices and download an English (Premium) voice such as Ava ' +
+            'or Zoe. JARVIS picks the best installed voice automatically.'
+        )
+      }
+    })
     voice.configure({
-      voice: process.env.JARVIS_VOICE || 'Daniel',
-      rate: 0.54,
+      // Empty means "pick the best installed voice" rather than pinning a
+      // named compact one; JARVIS_VOICE still overrides.
+      voice: process.env.JARVIS_VOICE || '',
+      // Slightly slower than before. The old rate read as clipped over
+      // Bluetooth, which is where this actually gets listened to.
+      rate: 0.5,
       volume: 1.0,
-      vadSilenceMs: 550,
+      // 550ms cut people off mid-sentence whenever they paused to think, and a
+      // truncated utterance is the single largest source of bad transcripts.
+      vadSilenceMs: 850,
       // Apple's server model handles accents, slang and proper nouns far better
       // than the on-device one. Set JARVIS_ON_DEVICE=1 to keep audio local at
       // the cost of noticeably worse recognition.
@@ -772,6 +904,12 @@ function registerIpc(): void {
   ipcMain.handle('tools:registry', () => toolRegistry())
 
   // Emergency stop: cancels speech, the in-flight turn and any queued work.
+  // Housekeeping, on demand as well as on the timer.
+  ipcMain.handle('maintenance:sweep', (_e, aggressive?: boolean) => sweep({ aggressive: !!aggressive }))
+  ipcMain.handle('maintenance:purge-screenshots', () => purgeScreenshots())
+  ipcMain.handle('budget:state', () => budget())
+  ipcMain.handle('claude:compact', () => compactor.compactNow())
+
   ipcMain.handle('jarvis:halt', () => {
     const halted = orchestrator.halt()
     log('EMERGENCY HALT:', JSON.stringify(halted))
@@ -858,6 +996,7 @@ registerMediaScheme()
 app.whenReady().then(async () => {
   app.setName('JARVIS')
   installMediaProtocol()
+  startJanitor()
 
   wireEvents()
   registerIpc()
@@ -928,6 +1067,10 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  stopJanitor()
+  // Screen captures can contain anything that was on screen. None of them
+  // outlive the session.
+  purgeScreenshots()
   voice.stop()
   claude.stop()
 })

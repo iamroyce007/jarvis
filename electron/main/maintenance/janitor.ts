@@ -1,0 +1,207 @@
+import { readdirSync, statSync, unlinkSync, rmSync, existsSync, truncateSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { app } from 'electron'
+import { db } from '../store/db.js'
+import { log } from '../log.js'
+import { LOG_PATH } from '../log.js'
+
+/**
+ * Housekeeping.
+ *
+ * JARVIS leaves debris in four places, and none of it was ever collected:
+ * screenshots it takes to look at the screen, scraped page bodies and images
+ * in the media cache, its own log, and rows in the database that describe
+ * research nobody will ask about again.
+ *
+ * Screenshots are the sensitive ones. A screen capture can contain anything
+ * that was on screen — messages, banking, passwords in a terminal — so those
+ * are swept on the shortest schedule and are not kept "just in case".
+ */
+
+export interface SweepReport {
+  screenshots: number
+  screenshotBytes: number
+  mediaFiles: number
+  mediaBytes: number
+  logBytes: number
+  explanations: number
+  briefings: number
+  usageRows: number
+}
+
+const HOUR = 60 * 60 * 1000
+const DAY = 24 * HOUR
+
+/** Screenshots older than this go. Deliberately short: they are sensitive. */
+const SCREENSHOT_MAX_AGE = Number(process.env.JARVIS_SCREENSHOT_TTL_MS ?? 30 * 60 * 1000)
+/** Cached remote images. Long enough that revisiting a story is still instant. */
+const MEDIA_MAX_AGE = 7 * DAY
+/** Stored research. Beyond this it is stale enough to be worth re-running. */
+const STORY_MAX_AGE = 30 * DAY
+/** Token accounting. Kept longer because it is tiny and useful over time. */
+const USAGE_MAX_AGE = 90 * DAY
+/** The log is truncated rather than deleted, so the current run keeps writing. */
+const LOG_MAX_BYTES = 2 * 1024 * 1024
+
+/**
+ * Where JARVIS writes screen captures.
+ *
+ * The system prompt tells Claude to use `/tmp/jarvis-screen.png`, but it does
+ * not always comply, so anything matching the shape is swept from both temp
+ * directories rather than only the one filename.
+ */
+const SCREENSHOT_DIRS = ['/tmp', tmpdir(), join(homedir(), 'Desktop')]
+const SCREENSHOT_NAME = /^(jarvis[-_].*\.(png|jpg|jpeg)|screen ?shot.*\.(png|jpg|jpeg))$/i
+
+function mediaDir(): string {
+  try {
+    return join(app.getPath('userData'), 'media')
+  } catch {
+    return join(homedir(), 'Library', 'Application Support', 'JARVIS', 'media')
+  }
+}
+
+function sweepDir(
+  dir: string,
+  match: RegExp,
+  maxAgeMs: number
+): { count: number; bytes: number } {
+  let count = 0
+  let bytes = 0
+  if (!existsSync(dir)) return { count, bytes }
+  const cutoff = Date.now() - maxAgeMs
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return { count, bytes }
+  }
+  for (const name of entries) {
+    if (!match.test(name)) continue
+    const full = join(dir, name)
+    try {
+      const st = statSync(full)
+      if (!st.isFile() || st.mtimeMs > cutoff) continue
+      unlinkSync(full)
+      count += 1
+      bytes += st.size
+    } catch {
+      /* someone else's file, or already gone */
+    }
+  }
+  return { count, bytes }
+}
+
+/**
+ * Deletes every screenshot immediately, regardless of age.
+ *
+ * Used on quit and on the user's explicit request — the age-based sweep is for
+ * the periodic pass, but "clear the screenshots" should mean now.
+ */
+export function purgeScreenshots(): { count: number; bytes: number } {
+  let count = 0
+  let bytes = 0
+  for (const dir of new Set(SCREENSHOT_DIRS)) {
+    const r = sweepDir(dir, SCREENSHOT_NAME, 0)
+    count += r.count
+    bytes += r.bytes
+  }
+  if (count > 0) log(`janitor: removed ${count} screenshot(s), ${Math.round(bytes / 1024)}KB`)
+  return { count, bytes }
+}
+
+function pruneTable(table: string, column: string, maxAgeMs: number): number {
+  try {
+    const r = db
+      .prepare(`DELETE FROM ${table} WHERE ${column} < ?`)
+      .run(Date.now() - maxAgeMs) as { changes?: number | bigint }
+    return Number(r.changes ?? 0)
+  } catch {
+    return 0
+  }
+}
+
+/** One full pass. Safe to call at any time; nothing here blocks a turn. */
+export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
+  const report: SweepReport = {
+    screenshots: 0,
+    screenshotBytes: 0,
+    mediaFiles: 0,
+    mediaBytes: 0,
+    logBytes: 0,
+    explanations: 0,
+    briefings: 0,
+    usageRows: 0
+  }
+
+  // --- screenshots: shortest leash, because of what they can contain -------
+  for (const dir of new Set(SCREENSHOT_DIRS)) {
+    const r = sweepDir(dir, SCREENSHOT_NAME, opts.aggressive ? 0 : SCREENSHOT_MAX_AGE)
+    report.screenshots += r.count
+    report.screenshotBytes += r.bytes
+  }
+
+  // --- scraped imagery -----------------------------------------------------
+  const media = sweepDir(mediaDir(), /./, opts.aggressive ? 0 : MEDIA_MAX_AGE)
+  report.mediaFiles = media.count
+  report.mediaBytes = media.bytes
+
+  // --- the log -------------------------------------------------------------
+  try {
+    const st = statSync(LOG_PATH)
+    if (opts.aggressive || st.size > LOG_MAX_BYTES) {
+      truncateSync(LOG_PATH, 0)
+      report.logBytes = st.size
+    }
+  } catch {
+    /* no log yet */
+  }
+  if (opts.aggressive) {
+    const prev = join(homedir(), 'Library', 'Logs', 'JARVIS', 'jarvis.previous.log')
+    try {
+      if (existsSync(prev)) {
+        report.logBytes += statSync(prev).size
+        rmSync(prev)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // --- stored research -----------------------------------------------------
+  report.explanations = pruneTable('explanations', 'at', opts.aggressive ? 0 : STORY_MAX_AGE)
+  report.briefings = pruneTable('briefings', 'at', opts.aggressive ? 0 : STORY_MAX_AGE)
+  report.usageRows = pruneTable('usage', 'at', opts.aggressive ? 0 : USAGE_MAX_AGE)
+
+  try {
+    // WAL had grown to three times the database itself.
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    if (opts.aggressive) db.exec('VACUUM')
+  } catch {
+    /* not fatal */
+  }
+
+  log(
+    `janitor: ${report.screenshots} screenshots, ${report.mediaFiles} cached images ` +
+      `(${Math.round(report.mediaBytes / 1024 / 1024)}MB), ${report.explanations} stories, ` +
+      `${report.briefings} briefings, ${report.usageRows} usage rows` +
+      (report.logBytes ? `, log truncated (${Math.round(report.logBytes / 1024)}KB)` : '')
+  )
+  return report
+}
+
+let timer: NodeJS.Timeout | null = null
+
+/** Sweeps at launch and every six hours after. */
+export function startJanitor(): void {
+  if (timer) return
+  setTimeout(() => sweep(), 20_000)
+  timer = setInterval(() => sweep(), 6 * HOUR)
+  timer.unref?.()
+}
+
+export function stopJanitor(): void {
+  if (timer) clearInterval(timer)
+  timer = null
+}

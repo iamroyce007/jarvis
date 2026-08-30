@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { resolveClaudeBinary, enrichedPath } from '../claude/resolve.js'
 import { readPages, type PageContent, type PageImage } from './browser.js'
 import { resolveFromWeb } from './webmedia.js'
+import { safetyClause, imageAllowed, pageAllowed, queryAllowed } from './safety.js'
 import { mediaUrl, originalUrl, prefetch } from '../media/proxy.js'
 import { ingestExplanation, findConnections, type Connection } from './correlate.js'
 import { fastWorker, webWorker, type StructuredWorker } from './worker.js'
@@ -86,6 +87,8 @@ export interface Explanation {
   coverage?: { facts: number; sources: number; reachable: number; images: number; entities: number }
   /** True while this is the unverified sketch rather than researched output. */
   provisional?: boolean
+  /** Replayed from an earlier pass rather than researched again. */
+  cached?: boolean
   failure?: string
 }
 
@@ -222,6 +225,7 @@ function bestImage(
   for (const page of pages) {
     for (const img of page.images) {
       if (used.has(img.url) || JUNK.test(img.url)) continue
+      if (!imageAllowed(img.url, `${img.alt} ${img.caption}`, page.url)) continue
 
       // The filename is evidence too: Wikimedia encodes the subject in it.
       let slug = ''
@@ -322,7 +326,7 @@ async function sketch(subject: string, cwd?: string): Promise<Explanation | null
   const started = Date.now()
   try {
     fast ??= fastWorker(cwd ?? process.cwd())
-    const out = await fast.run(`${SKETCH_PROMPT}\n\n<SUBJECT>\n${subject}\n</SUBJECT>`, 45_000)
+    const out = await fast.run(`${SKETCH_PROMPT}${safetyClause()}\n\n<SUBJECT>\n${subject}\n</SUBJECT>`, 45_000)
     const parsed = parseJson<Record<string, unknown>>(out)
     if (!parsed) return null
 
@@ -397,6 +401,33 @@ export interface ExplainHandlers {
  * Resolves once everything is done, but the useful output arrives earlier via
  * `onStory` — callers should render from that and let media stream in.
  */
+/**
+ * The most recent stored story for a subject, if it is still fresh.
+ *
+ * Six hours is chosen to match the rate-limit window: within one sitting the
+ * answer will not have changed, and across sittings it is worth re-checking.
+ */
+const CACHE_MS = Number(process.env.JARVIS_STORY_CACHE_MS ?? 6 * 60 * 60 * 1000)
+
+function cachedExplanation(subject: string): Explanation | null {
+  try {
+    const row = db
+      .prepare(
+        `SELECT payload FROM explanations
+         WHERE lower(subject) = lower(?) AND at >= ?
+         ORDER BY at DESC LIMIT 1`
+      )
+      .get(subject.trim(), Date.now() - CACHE_MS) as { payload?: string } | undefined
+    if (!row?.payload) return null
+    const parsed = JSON.parse(row.payload) as Explanation
+    // A failed or half-finished pass is not worth replaying.
+    if (parsed.failure || parsed.provisional || parsed.frames.length === 0) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
 export async function explain(subject: string, h: ExplainHandlers = {}): Promise<Explanation> {
   const started = Date.now()
   const base: Explanation = {
@@ -415,6 +446,20 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
   }
 
   if (inFlight) return { ...base, failure: 'Already assembling something.' }
+
+  // Asking about the same subject twice in an afternoon is common — a follow-up
+  // question, or the same name coming back around in conversation. Replaying
+  // the stored story is instant and free; researching it again buys nothing
+  // but a second copy of the same pages in context.
+  const recent = cachedExplanation(subject)
+  if (recent) {
+    log(`explain: replaying cached story for "${subject}"`)
+    h.onProgress?.('Recalling')
+    const story = { ...recent, cached: true }
+    h.onStory?.(story)
+    return story
+  }
+
   inFlight = true
   const progress = h.onProgress ?? ((): void => {})
 
@@ -424,7 +469,7 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
     // cost three seconds of nothing happening on every single question.
     progress('Searching sources')
     web ??= webWorker(h.cwd ?? process.cwd())
-    const research = web.run(`${PROMPT}\n\n<SUBJECT>\n${subject}\n</SUBJECT>`, 180_000)
+    const research = web.run(`${PROMPT}${safetyClause()}\n\n<SUBJECT>\n${subject}\n</SUBJECT>`, 180_000)
     // A rejection here is handled at the await below; this keeps Node from
     // treating it as unhandled in the window before then.
     research.catch(() => undefined)
@@ -444,7 +489,7 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
       progress('Searching sources')
       h.onStory?.(quick)
       const hero = await heroImage
-      if (hero) {
+      if (hero && imageAllowed(hero.url, hero.title ?? '', hero.pageUrl)) {
         const media = {
           image: mediaUrl(hero.url, hero.pageUrl),
           credit: hero.publisher,
@@ -547,7 +592,10 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
 
     // ---- imagery, in parallel, from the pages the research already cited ----
     progress('Opening sources')
-    const pages = await readPages(sources.slice(0, 6).map((s) => s.url), 4)
+    const pages = await readPages(
+      sources.filter((s) => pageAllowed(s.url)).slice(0, 6).map((s) => s.url),
+      4
+    )
     for (const s of sources) s.reachable = pages.some((p) => p.url === s.url && !p.failure)
 
     const used = new Set<string>()
@@ -599,8 +647,10 @@ export async function explain(subject: string, h: ExplainHandlers = {}): Promise
       await Promise.all(
         unillustrated.slice(0, 6).map(async (f) => {
           try {
+            if (!queryAllowed(f.subject as string)) return
             const web = await resolveFromWeb(f.subject as string, { cwd: h.cwd })
             if (!web.hero || used.has(web.hero.url)) return
+            if (!imageAllowed(web.hero.url, web.hero.title ?? '', web.hero.pageUrl)) return
             used.add(web.hero.url)
             const media = {
               image: mediaUrl(web.hero.url, web.hero.pageUrl),
