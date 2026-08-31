@@ -17,6 +17,11 @@ const api = {
   openVoiceSettings: (pane: 'SpeechRecognition' | 'Microphone' | 'Dictation'): Promise<void> =>
     ipcRenderer.invoke('voice:open-settings', pane),
 
+  mobileState: () => ipcRenderer.invoke('mobile:state'),
+  mobileStart: () => ipcRenderer.invoke('mobile:start'),
+  mobileStop: () => ipcRenderer.invoke('mobile:stop'),
+  mobilePair: () => ipcRenderer.invoke('mobile:pair'),
+  mobileRevoke: (id: string) => ipcRenderer.invoke('mobile:revoke', id),
   sweep: (aggressive?: boolean) => ipcRenderer.invoke('maintenance:sweep', aggressive),
   purgeScreenshots: () => ipcRenderer.invoke('maintenance:purge-screenshots'),
   budgetState: () => ipcRenderer.invoke('budget:state'),

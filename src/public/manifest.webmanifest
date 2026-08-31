@@ -1,0 +1,15 @@
+{
+  "name": "JARVIS",
+  "short_name": "JARVIS",
+  "description": "Intelligence workstation, on the phone.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#020509",
+  "theme_color": "#020509",
+  "icons": [
+    { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

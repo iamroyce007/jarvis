@@ -1,0 +1,599 @@
+/*
+ * The vertical storyboard.
+ *
+ * One frame fills the screen; the next is a swipe away. Scroll snapping does
+ * the work rather than a gesture library, so a flick, a slow drag and a
+ * programmatic jump all behave the same and momentum is the platform's own.
+ */
+
+.ms {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── where you are in the story: a spine, not a progress bar ── */
+.ms-spine {
+  position: absolute;
+  right: 4px;
+  top: 46%;
+  transform: translateY(-50%);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 4px;
+}
+.ms-tick {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  border: none;
+  padding: 0;
+  background: var(--ink-void);
+  transition: background var(--quick) var(--ease), height var(--quick) var(--ease);
+}
+.ms-tick.past { background: var(--ink-ghost); }
+.ms-tick.here {
+  height: 26px;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan-glow);
+}
+
+/* ── header ── */
+.ms-head {
+  flex: none;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 18px 10px;
+}
+.ms-back {
+  flex: none;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-edge);
+  background: var(--surface-glass);
+  color: var(--ink-soft);
+  font-size: 22px;
+  line-height: 1;
+  padding-bottom: 3px;
+}
+.ms-back:active { background: var(--surface-raised); }
+.ms-head-text { min-width: 0; }
+.ms-head-text strong {
+  display: block;
+  font-family: 'Outfit', sans-serif;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ms-head-text span {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* ── the run of frames ── */
+.ms-run {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+}
+.ms-run::-webkit-scrollbar { display: none; }
+
+.ms-frame {
+  position: relative;
+  height: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* The frame's own image, blown up behind it — the desktop's depth plate. */
+.ms-plate {
+  position: absolute;
+  inset: -10%;
+  background-size: cover;
+  background-position: center;
+  filter: blur(44px) saturate(0.55) brightness(0.3);
+  transform: scale(1.1);
+}
+.ms-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 90% 60% at 50% 40%, rgba(2, 5, 9, 0.4), rgba(2, 5, 9, 0.94) 76%),
+    linear-gradient(180deg, rgba(2,5,9,0.9), transparent 18%, transparent 72%, rgba(2,5,9,0.96));
+  pointer-events: none;
+}
+
+.ms-body {
+  position: relative;
+  z-index: 2;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: 100%;
+  padding: 18px 22px 30px;
+  scrollbar-width: none;
+}
+.ms-body::-webkit-scrollbar { display: none; }
+
+/* ── §3/§8: the photograph is the subject ── */
+.ms-photo {
+  margin: 0 0 18px;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  border: 1px solid var(--glass-edge);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.62);
+  animation: msIn var(--cinematic) var(--ease-out) both;
+}
+.ms-photo img {
+  display: block;
+  width: 100%;
+  height: clamp(220px, 42vh, 400px);
+  object-fit: cover;
+}
+.ms-photo figcaption {
+  padding: 7px 11px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  background: var(--surface);
+}
+@keyframes msIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+.ms-kind {
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--cyan-dim);
+  margin-bottom: 7px;
+}
+.ms-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: clamp(23px, 6.6vw, 32px);
+  font-weight: 300;
+  line-height: 1.16;
+  letter-spacing: -0.012em;
+  color: var(--white);
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+
+.ms-value {
+  font-family: 'Outfit', sans-serif;
+  font-size: clamp(40px, 13vw, 66px);
+  font-weight: 200;
+  line-height: 1;
+  color: var(--cyan);
+  margin-bottom: 12px;
+}
+.ms-value em {
+  font-size: 0.34em;
+  font-style: normal;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  margin-left: 8px;
+}
+
+.ms-quote {
+  margin: 0 0 14px;
+  padding-left: 15px;
+  border-left: 2px solid var(--glass-edge-strong);
+  font-family: 'Outfit', sans-serif;
+  font-size: 17px;
+  font-weight: 300;
+  line-height: 1.44;
+  color: var(--ink);
+}
+.ms-quote cite {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
+.ms-narration {
+  font-size: 15px;
+  line-height: 1.58;
+  color: var(--ink-soft);
+  margin: 0 0 16px;
+}
+
+/* ── facts ── */
+.ms-facts {
+  margin: 0 0 16px;
+  display: grid;
+  gap: 1px;
+  background: var(--glass-edge);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.ms-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 13px;
+  background: var(--surface);
+}
+.ms-facts dt {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  flex: none;
+}
+.ms-facts dd {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+  text-align: right;
+}
+
+/* ── §11: chronology as a spatial run ── */
+.ms-time {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0 0 0 18px;
+  position: relative;
+}
+.ms-time::before {
+  content: '';
+  position: absolute;
+  left: 3px; top: 6px; bottom: 6px;
+  width: 1px;
+  background: linear-gradient(180deg, var(--cyan-dim), var(--glass-edge), transparent);
+}
+.ms-time li {
+  position: relative;
+  padding: 0 0 16px;
+}
+.ms-time li::before {
+  content: '';
+  position: absolute;
+  left: -18px; top: 5px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--void);
+  border: 1.5px solid var(--cyan-dim);
+}
+.ms-time-date {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cyan-dim);
+}
+.ms-time-label {
+  display: block;
+  font-size: 14px;
+  color: var(--ink);
+  margin-top: 3px;
+}
+.ms-time-detail {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+/* ── §12: connections shown as what they rest on ── */
+.ms-conns { display: grid; gap: 10px; margin-bottom: 16px; }
+.ms-conn {
+  padding: 13px;
+  border-radius: var(--r-lg);
+  background: var(--surface-glass);
+  border: 1px solid var(--glass-edge);
+}
+.ms-conn-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--ink);
+}
+.ms-conn-pair em {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ms-basis {
+  display: inline-block;
+  margin: 8px 0 7px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-faint);
+}
+.ms-basis.documented { color: var(--reported); border-color: rgba(107,168,255,0.3); }
+.ms-basis.shared-entity { color: var(--inferred); border-color: rgba(157,140,255,0.3); }
+.ms-basis.co-occurrence { color: var(--inferred); }
+.ms-basis.similarity-only { color: var(--unknown-conf); }
+.ms-conn p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.ms-via {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 7px;
+}
+.ms-review {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
+/* ── provenance ── */
+.ms-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+.ms-conf {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  opacity: 0.85;
+}
+.ms-conf.confirmed { color: var(--confirmed); }
+.ms-conf.corroborated { color: var(--corroborated); }
+.ms-conf.reported { color: var(--reported); }
+.ms-conf.inferred { color: var(--inferred); }
+.ms-conf.disputed { color: var(--disputed); }
+.ms-conf.unknown { color: var(--unknown-conf); }
+
+.ms-src {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--cyan-ghost);
+  border: 1px solid var(--glass-edge);
+}
+.ms-src:active { border-color: var(--glass-edge-strong); color: var(--ink-soft); }
+
+/* ── §14/§15 ── */
+.ms-actions { display: flex; gap: 9px; }
+.ms-actions button {
+  flex: 1;
+  padding: 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--glass-edge);
+  background: var(--surface-glass);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.ms-actions button:active {
+  background: var(--surface-raised);
+  border-color: var(--glass-edge-strong);
+  color: var(--cyan);
+}
+
+/* ── §9/§13 level three ── */
+.ms-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(2, 5, 9, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: fadeIn var(--quick) var(--ease) both;
+}
+.ms-sheet-body {
+  width: 100%;
+  padding: 0 22px calc(28px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: var(--surface-panel);
+  border-top: 1px solid var(--glass-edge-strong);
+  animation: msUp var(--normal) var(--ease-out) both;
+}
+@keyframes msUp {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+.ms-sheet-grip {
+  width: 38px; height: 4px;
+  border-radius: 2px;
+  background: var(--ink-ghost);
+  margin: 10px auto 16px;
+}
+.ms-sheet-pub {
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cyan-dim);
+}
+.ms-sheet-body h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 19px;
+  font-weight: 300;
+  line-height: 1.3;
+  color: var(--ink);
+  margin: 8px 0 10px;
+}
+.ms-sheet-date { font-size: 11px; color: var(--ink-faint); }
+.ms-sheet-why {
+  margin: 14px 0 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.ms-btn-wide {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  padding: 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--glass-edge-strong);
+  background: linear-gradient(160deg, rgba(79,214,255,0.16), rgba(79,214,255,0.04));
+  color: var(--cyan);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ms-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+/* ══════════════════════════════════════════ THE CORE (shared presence) */
+.m-core {
+  position: relative;
+  width: 96px; height: 96px;
+  display: grid;
+  place-items: center;
+}
+.m-core-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-edge-strong);
+  animation: mSpin 22s linear infinite;
+}
+.m-core-ring.slow {
+  inset: 13px;
+  border-color: var(--glass-edge);
+  animation: mSpin 34s linear infinite reverse;
+}
+.m-core-eye {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, var(--cyan), var(--cyan-dim) 65%, transparent 72%);
+  box-shadow: 0 0 26px var(--cyan-glow);
+  transition: transform var(--normal) var(--ease), box-shadow var(--normal) var(--ease);
+}
+@keyframes mSpin { to { transform: rotate(360deg); } }
+
+.m-core.listening .m-core-eye {
+  transform: scale(1.2);
+  box-shadow: 0 0 40px var(--cyan-glow);
+  animation: mPulse 1.5s ease-in-out infinite;
+}
+.m-core.working .m-core-eye {
+  background: radial-gradient(circle at 40% 35%, var(--thinking), #6a5acd 65%, transparent 72%);
+  box-shadow: 0 0 34px var(--thinking-glow);
+  animation: mPulse 2s ease-in-out infinite;
+}
+.m-core.working .m-core-ring { animation-duration: 7s; border-color: rgba(157,140,255,0.28); }
+.m-core.speaking .m-core-eye { animation: mPulse 0.85s ease-in-out infinite; }
+.m-core.error .m-core-eye {
+  background: radial-gradient(circle at 40% 35%, var(--danger), #8b2b2b 65%, transparent 72%);
+  box-shadow: 0 0 30px var(--danger-glow);
+}
+@keyframes mPulse {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-core-ring, .m-core-eye, .ms-photo { animation: none !important; }
+}
+
+/* ══════════════════════════════════════════════ §27 LANDSCAPE: A WORKSTATION */
+/*
+ * Rotating the phone should buy a second column, not longer lines. The
+ * photograph moves beside the account of it — the desktop's parallel
+ * composition, at the largest size this screen can honestly carry.
+ */
+@media (orientation: landscape) and (max-height: 560px) {
+  .ms-body {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
+    align-content: start;
+    gap: 0 26px;
+    padding: 14px 26px 22px;
+  }
+
+  /* The photograph spans the rows beside it and stays the dominant object. */
+  .ms-photo {
+    grid-column: 1;
+    grid-row: 1 / span 12;
+    align-self: start;
+    margin: 0;
+  }
+  .ms-photo img { height: clamp(180px, 58vh, 320px); }
+
+  /* Everything else stacks in the right-hand column. */
+  .ms-kind,
+  .ms-title,
+  .ms-value,
+  .ms-quote,
+  .ms-narration,
+  .ms-facts,
+  .ms-time,
+  .ms-conns,
+  .ms-foot,
+  .ms-actions {
+    grid-column: 2;
+  }
+
+  /* A frame with no photograph gets the whole width rather than a gap. */
+  .ms-body:not(:has(.ms-photo)) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ms-body:not(:has(.ms-photo)) > * { grid-column: 1; }
+
+  .ms-title { font-size: clamp(20px, 3.4vw, 27px); margin-bottom: 8px; }
+  .ms-narration { font-size: 13.5px; margin-bottom: 12px; }
+  .ms-head { padding-top: 2px; padding-bottom: 6px; }
+}
+
+/*
+ * Browsers without `:has()` would leave a dead column on an unillustrated
+ * frame. Falling back to a single column is the safe direction — it only
+ * loses the side-by-side arrangement, never the content.
+ */
+@supports not selector(:has(*)) {
+  @media (orientation: landscape) and (max-height: 560px) {
+    .ms-body { grid-template-columns: minmax(0, 1fr); }
+    .ms-photo { grid-row: auto; grid-column: 1; margin-bottom: 14px; }
+    .ms-kind, .ms-title, .ms-value, .ms-quote, .ms-narration,
+    .ms-facts, .ms-time, .ms-conns, .ms-foot, .ms-actions { grid-column: 1; }
+  }
+}

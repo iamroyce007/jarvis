@@ -68,6 +68,7 @@ export default function App() {
   const [stage, setStage] = useState<Stage>({ kind: 'rest' })
   const [steps, setSteps] = useState<ActivityStep[]>([])
   const [diagnostics, setDiagnostics] = useState(false)
+  const [pairing, setPairing] = useState(false)
   const [presenting, setPresenting] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -153,6 +154,11 @@ export default function App() {
       if (e.key === 'i' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         setDiagnostics((d) => !d)
+      }
+      // Pair a phone. The code is shown here and typed there.
+      if (e.key === 'p' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
+        e.preventDefault()
+        setPairing((p) => !p)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -338,6 +344,7 @@ export default function App() {
       </footer>
 
       {diagnostics ? <Diagnostics session={session} onClose={() => setDiagnostics(false)} /> : null}
+      {pairing ? <PairPhone onClose={() => setPairing(false)} /> : null}
     </div>
   )
 }
@@ -441,6 +448,130 @@ function D({ k, v }: { k: string; v: string }) {
     <div className="diag-row">
       <span>{k}</span>
       <span>{v}</span>
+    </div>
+  )
+}
+
+
+/**
+ * Pairing a phone.
+ *
+ * The phone is another window onto this process, so letting one in is granting
+ * it the workstation's authority. That is why it takes a deliberate action
+ * here, shows a code that expires, and lists what is already paired — the user
+ * should always be able to see, and revoke, every device that can see JARVIS.
+ */
+function PairPhone({ onClose }: { onClose: () => void }): JSX.Element {
+  const [state, setState] = useState<{
+    urls: string[]
+    pairingCode: string | null
+    pairingExpiresAt: number | null
+    fingerprint: string | null
+    reachable: boolean
+    devices: { id: string; name: string; pairedAt: number }[]
+    clients: number
+  } | null>(null)
+  const [left, setLeft] = useState(0)
+
+  const refresh = useCallback(async () => {
+    setState((await window.jarvis.mobileState()) as never)
+  }, [])
+
+  useEffect(() => {
+    // Starting the server is implied by opening this panel: the user is here to
+    // connect a phone.
+    void window.jarvis.mobileStart().then((s: unknown) => setState(s as never))
+    const t = setInterval(() => {
+      setState((cur) => {
+        if (cur?.pairingExpiresAt) setLeft(Math.max(0, cur.pairingExpiresAt - Date.now()))
+        return cur
+      })
+    }, 500)
+    return () => clearInterval(t)
+  }, [])
+
+  const url = state?.urls?.[0] ?? null
+
+  return (
+    <div className="diag-backdrop" onClick={onClose}>
+      <div className="diag-panel pair-panel" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <h2>Pair a phone</h2>
+          <button onClick={onClose}>Close</button>
+        </header>
+
+        {!url ? (
+          <p className="pair-note">
+            No private network address available. Connect this Mac to Wi-Fi, then reopen.
+          </p>
+        ) : (
+          <>
+            {!state?.reachable && (
+              <p className="pair-note pair-warn">
+                This address only works on the same Wi-Fi. To reach JARVIS from
+                anywhere, install Tailscale on both this Mac and the iPhone and sign
+                in to the same account — the address below then works everywhere,
+                over an encrypted link, with no port exposed to the internet.
+              </p>
+            )}
+
+            <ol className="pair-steps">
+              <li>
+                On the iPhone, open Safari and go to <code>{url}</code>
+              </li>
+              <li>
+                Safari will warn that the certificate is not trusted — it is self-signed by
+                this Mac. Tap <b>Show Details</b> › <b>visit this website</b>.
+              </li>
+              <li>
+                Tap <b>Share</b> › <b>Add to Home Screen</b>. Open JARVIS from there, not
+                from Safari — the microphone and full-screen layout need it installed.
+              </li>
+              <li>Enter the code below.</li>
+            </ol>
+
+            {state?.pairingCode && left > 0 ? (
+              <div className="pair-code">
+                <strong>{state.pairingCode}</strong>
+                <span>expires in {Math.ceil(left / 1000)}s</span>
+              </div>
+            ) : (
+              <button
+                className="pair-go"
+                onClick={() => void window.jarvis.mobilePair().then(() => void refresh())}
+              >
+                Show pairing code
+              </button>
+            )}
+
+            {state?.fingerprint && (
+              <div className="pair-fp">
+                Certificate {state.fingerprint.slice(0, 29)}…
+              </div>
+            )}
+
+            <div className="pair-devices">
+              <h3>Paired devices {state?.clients ? `· ${state.clients} connected` : ''}</h3>
+              {(state?.devices ?? []).length === 0 ? (
+                <p className="pair-note">None yet.</p>
+              ) : (
+                (state?.devices ?? []).map((d) => (
+                  <div className="pair-device" key={d.id}>
+                    <span>{d.name}</span>
+                    <button
+                      onClick={() =>
+                        void window.jarvis.mobileRevoke(d.id).then(() => void refresh())
+                      }
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

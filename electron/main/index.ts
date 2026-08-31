@@ -55,6 +55,7 @@ import { routeIntent, needsResearch, type ViewIntent } from './intelligence/inte
 import { budget, claimResearch, refundResearch } from './intelligence/budget.js'
 import { startJanitor, stopJanitor, sweep, purgeScreenshots } from './maintenance/janitor.js'
 import { Compactor } from './claude/compact.js'
+import { MobileServer } from './server/mobile.js'
 import { queryAllowed, gateCommand, unlock, lock, isUnlocked, REFUSAL } from './intelligence/safety.js'
 import { project, isProjecting } from './intelligence/scenarios.js'
 import { setSessionTools, setNativeAvailability, toolRegistry } from './intelligence/tools.js'
@@ -130,8 +131,39 @@ let capabilities: Capabilities | null = null
  */
 const CONTEXT_RESET_TOKENS = 400_000
 
+/**
+ * Every request the interface can make, by channel.
+ *
+ * Populated by `handle` below. The phone reaches JARVIS through exactly these
+ * functions — the same ones the desktop window calls — rather than through a
+ * parallel API, which is what keeps one canonical implementation behind both
+ * screens instead of two that drift.
+ */
+const RPC = new Map<string, (...args: unknown[]) => unknown>()
+
+/**
+ * Registers an IPC handler and records it for the mobile bridge.
+ *
+ * A thin wrapper over `ipcMain.handle` so that adding a capability to the
+ * desktop cannot silently leave the phone behind.
+ */
+function handle(channel: string, fn: (...args: never[]) => unknown): void {
+  RPC.set(channel, fn as (...args: unknown[]) => unknown)
+  ipcMain.handle(channel, fn as (e: Electron.IpcMainInvokeEvent, ...a: unknown[]) => unknown)
+}
+
+const mobile = new MobileServer(join(__dirname, '../renderer'))
+
+/**
+ * Pushes an event to every surface showing JARVIS.
+ *
+ * The desktop window and any paired phone receive the same event on the same
+ * channel at the same moment, which is what makes continuity require no sync:
+ * there is one stream of truth and several subscribers to it.
+ */
 function send(channel: string, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+  mobile.broadcast(channel, payload)
 }
 
 function sessionInfo(): SessionInfo {
@@ -848,10 +880,10 @@ function researchSubject(text: string): string | null {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('voice:open-settings', (_e, pane: 'SpeechRecognition' | 'Microphone' | 'Dictation') =>
+  handle('voice:open-settings', (_e, pane: 'SpeechRecognition' | 'Microphone' | 'Dictation') =>
     openPrivacySettings(pane)
   )
-  ipcMain.handle('explain', async (_e, subject: string) => {
+  handle('explain', async (_e, subject: string) => {
     return explain(subject, {
       cwd: workspaceRoot,
       onProgress: (stage) => send('brief-progress', { subject, stage }),
@@ -859,10 +891,10 @@ function registerIpc(): void {
       onMedia: (frameId, media) => send('story-media', { frameId, media })
     })
   })
-  ipcMain.handle('explain:recent', (_e, limit?: number) => recentExplanations(limit ?? 20))
-  ipcMain.handle('explain:get', (_e, id: string) => getExplanation(id))
+  handle('explain:recent', (_e, limit?: number) => recentExplanations(limit ?? 20))
+  handle('explain:get', (_e, id: string) => getExplanation(id))
 
-  ipcMain.handle('project', async (_e, subject: string) => {
+  handle('project', async (_e, subject: string) => {
     const p = await project(subject, {
       cwd: workspaceRoot,
       onProgress: (stage) => send('brief-progress', { subject, stage })
@@ -871,7 +903,7 @@ function registerIpc(): void {
     return p
   })
 
-  ipcMain.handle('spotlight', async (_e, subject: string) => {
+  handle('spotlight', async (_e, subject: string) => {
     const s = await spotlight(subject, {
       cwd: workspaceRoot,
       onProgress: (stage) => send('brief-progress', { subject, stage })
@@ -880,7 +912,7 @@ function registerIpc(): void {
     return s
   })
 
-  ipcMain.handle('brief:research', async (_e, subject: string) => {
+  handle('brief:research', async (_e, subject: string) => {
     const b = await research(subject, {
       cwd: workspaceRoot,
       onProgress: (stage) => send('brief-progress', { subject, stage })
@@ -888,36 +920,66 @@ function registerIpc(): void {
     send('brief-done', b)
     return b
   })
-  ipcMain.handle('brief:recent', (_e, limit?: number) => recentBriefings(limit ?? 20))
-  ipcMain.handle('brief:get', (_e, id: string) => getBriefing(id))
-  ipcMain.handle('brief:running', () => isBriefingRunning())
+  handle('brief:recent', (_e, limit?: number) => recentBriefings(limit ?? 20))
+  handle('brief:get', (_e, id: string) => getBriefing(id))
+  handle('brief:running', () => isBriefingRunning())
 
-  ipcMain.handle('graph:snapshot', (_e, limit?: number) => graphSnapshot(limit ?? 120))
-  ipcMain.handle('graph:profile', (_e, id: string) => entityProfile(id))
-  ipcMain.handle('graph:search', (_e, q: string) => searchEntities(q))
-  ipcMain.handle('graph:changes', (_e, sinceMs?: number) =>
+  handle('graph:snapshot', (_e, limit?: number) => graphSnapshot(limit ?? 120))
+  handle('graph:profile', (_e, id: string) => entityProfile(id))
+  handle('graph:search', (_e, q: string) => searchEntities(q))
+  handle('graph:changes', (_e, sinceMs?: number) =>
     changesSince(sinceMs ?? 24 * 60 * 60 * 1000)
   )
-  ipcMain.handle('graph:stats', () => graphStats())
-  ipcMain.handle('graph:clear', () => clearGraph())
+  handle('graph:stats', () => graphStats())
+  handle('graph:clear', () => clearGraph())
 
-  ipcMain.handle('tools:registry', () => toolRegistry())
+  handle('tools:registry', () => toolRegistry())
 
   // Emergency stop: cancels speech, the in-flight turn and any queued work.
-  // Housekeeping, on demand as well as on the timer.
-  ipcMain.handle('maintenance:sweep', (_e, aggressive?: boolean) => sweep({ aggressive: !!aggressive }))
-  ipcMain.handle('maintenance:purge-screenshots', () => purgeScreenshots())
-  ipcMain.handle('budget:state', () => budget())
-  ipcMain.handle('claude:compact', () => compactor.compactNow())
+  // ---- the phone -----------------------------------------------------
+  // Routed through the same RPC table the desktop uses, with an explicit
+  // refusal for anything not registered: the bridge must never become a way to
+  // reach code the desktop interface itself cannot.
+  mobile.setHandler(async (method, args) => {
+    const fn = RPC.get(method)
+    if (!fn) throw new Error(`unknown method: ${method}`)
+    // IPC handlers take an event as their first argument; the phone has none.
+    return await (fn as (e: unknown, ...a: unknown[]) => unknown)(null, ...args)
+  })
 
-  ipcMain.handle('jarvis:halt', () => {
+  handle('mobile:state', () => mobile.state())
+  handle('mobile:start', () => mobile.start())
+  handle('mobile:stop', () => {
+    mobile.stop()
+    return mobile.state()
+  })
+  handle('mobile:pair', () => {
+    // Starting the server implicitly: asking to pair is asking to be reachable.
+    mobile.start()
+    const p = mobile.startPairing()
+    send('mobile-state', mobile.state())
+    return { ...p, state: mobile.state() }
+  })
+  handle('mobile:revoke', (_e: unknown, id: string) => {
+    const ok = mobile.revoke(id)
+    send('mobile-state', mobile.state())
+    return ok
+  })
+
+  // Housekeeping, on demand as well as on the timer.
+  handle('maintenance:sweep', (_e, aggressive?: boolean) => sweep({ aggressive: !!aggressive }))
+  handle('maintenance:purge-screenshots', () => purgeScreenshots())
+  handle('budget:state', () => budget())
+  handle('claude:compact', () => compactor.compactNow())
+
+  handle('jarvis:halt', () => {
     const halted = orchestrator.halt()
     log('EMERGENCY HALT:', JSON.stringify(halted))
     send('halted', halted)
     return halted
   })
 
-  ipcMain.handle('usage:export', async () => {
+  handle('usage:export', async () => {
     const { writeFile } = await import('node:fs/promises')
     const out = join(homedir(), 'Desktop', `jarvis-tokens-${Date.now()}.csv`)
     await writeFile(out, exportUsage(), 'utf8')
@@ -925,19 +987,19 @@ function registerIpc(): void {
     return out
   })
 
-  ipcMain.handle('caps:get', async () => capabilities ?? (await checkCapabilities()))
-  ipcMain.handle('caps:request', async () => {
+  handle('caps:get', async () => capabilities ?? (await checkCapabilities()))
+  handle('caps:request', async () => {
     capabilities = await requestCapabilities()
     return capabilities
   })
-  ipcMain.handle('caps:open', (_e, which: 'screen' | 'accessibility' | 'automation') =>
+  handle('caps:open', (_e, which: 'screen' | 'accessibility' | 'automation') =>
     openCapabilityPane(which)
   )
 
-  ipcMain.handle('history:recent', (_e, limit?: number) => recentTurns(limit ?? 200))
-  ipcMain.handle('history:search', (_e, q: string, limit?: number) => searchTurns(q, limit ?? 50))
-  ipcMain.handle('history:clear', () => clearTurns())
-  ipcMain.handle('history:export', async () => {
+  handle('history:recent', (_e, limit?: number) => recentTurns(limit ?? 200))
+  handle('history:search', (_e, q: string, limit?: number) => searchTurns(q, limit ?? 50))
+  handle('history:clear', () => clearTurns())
+  handle('history:export', async () => {
     const { writeFile } = await import('node:fs/promises')
     const out = join(homedir(), 'Desktop', `jarvis-conversations-${Date.now()}.txt`)
     await writeFile(out, exportTurns(), 'utf8')
@@ -945,9 +1007,9 @@ function registerIpc(): void {
     return out
   })
 
-  ipcMain.handle('errors:recent', (_e, limit?: number) => recentErrors(limit ?? 200))
-  ipcMain.handle('errors:clear', () => clearErrors())
-  ipcMain.handle('errors:export', async () => {
+  handle('errors:recent', (_e, limit?: number) => recentErrors(limit ?? 200))
+  handle('errors:clear', () => clearErrors())
+  handle('errors:export', async () => {
     const { writeFile } = await import('node:fs/promises')
     const out = join(homedir(), 'Desktop', `jarvis-errors-${Date.now()}.txt`)
     await writeFile(out, exportErrors(), 'utf8')
@@ -955,32 +1017,32 @@ function registerIpc(): void {
     return out
   })
 
-  ipcMain.handle('session:info', () => sessionInfo())
-  ipcMain.handle('jarvis:state', () => orchestrator.getState())
+  handle('session:info', () => sessionInfo())
+  handle('jarvis:state', () => orchestrator.getState())
 
-  ipcMain.handle('jarvis:ask', async (_e, text: string) => {
+  handle('jarvis:ask', async (_e, text: string) => {
     // Typed input bypasses the transcript event, so it is recorded here.
     recordTurn('user', text, { session: claude.sessionId, source: 'text' })
     await orchestrator.ask(text)
   })
 
-  ipcMain.handle('jarvis:interrupt', () => orchestrator.bargeIn())
-  ipcMain.handle('jarvis:conversation', (_e, on: boolean) =>
+  handle('jarvis:interrupt', () => orchestrator.bargeIn())
+  handle('jarvis:conversation', (_e, on: boolean) =>
     on ? orchestrator.enterConversation() : orchestrator.exitConversation()
   )
 
-  ipcMain.handle('voice:listen', (_e, on: boolean) => (on ? voice.listen() : voice.stopListening()))
-  ipcMain.handle('voice:mute', (_e, on: boolean) => {
+  handle('voice:listen', (_e, on: boolean) => (on ? voice.listen() : voice.stopListening()))
+  handle('voice:mute', (_e, on: boolean) => {
     voice.muted = on
     if (on) voice.shutUp()
   })
-  ipcMain.handle('voice:auth', () => voice.requestAuth())
+  handle('voice:auth', () => voice.requestAuth())
 
-  ipcMain.handle('claude:new-session', async () => {
+  handle('claude:new-session', async () => {
     await claude.newSession()
     return sessionInfo()
   })
-  ipcMain.handle('claude:set-personality', async (_e, p: Personality) => {
+  handle('claude:set-personality', async (_e, p: Personality) => {
     // Personality is part of the system prompt, so the session must restart.
     ;(claude as unknown as { opts: { systemPromptAppend: string } }).opts.systemPromptAppend =
       buildSystemPrompt(p)
@@ -1068,6 +1130,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   stopJanitor()
+  mobile.stop()
   // Screen captures can contain anything that was on screen. None of them
   // outlive the session.
   purgeScreenshots()

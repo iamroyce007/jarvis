@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>JARVIS</title>
+    <!--
+      viewport-fit=cover lets the ambient background run under the notch and the
+      home indicator; the layout keeps clear of them with env(safe-area-inset-*).
+      user-scalable=no because pinch is a gesture the storyboard uses itself.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1"
+    />
+    <meta name="theme-color" content="#020509" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="JARVIS" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <!--
+      Imagery is served from this origin by the workstation's own cache, so no
+      remote image host needs to be allowed at all — the phone never contacts a
+      publisher directly.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' data: blob:; script-src 'self'; connect-src 'self'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/mobile/main.tsx"></script>
+  </body>
+</html>

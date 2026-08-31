@@ -44,6 +44,13 @@ declare global {
       requestVoiceAuth(): Promise<void>
       openVoiceSettings(pane: 'SpeechRecognition' | 'Microphone' | 'Dictation'): Promise<void>
       newSession(): Promise<SessionInfo>
+
+      // The phone bridge. Off unless the user opens the pairing panel.
+      mobileState(): Promise<unknown>
+      mobileStart(): Promise<unknown>
+      mobileStop(): Promise<unknown>
+      mobilePair(): Promise<unknown>
+      mobileRevoke(id: string): Promise<boolean>
       setPersonality(p: string): Promise<SessionInfo>
       onIntent(cb: (i: IntentInfo) => void): () => void
       onProjection(cb: (p: Projection) => void): () => void

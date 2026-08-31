@@ -300,4 +300,33 @@ export async function prefetch(urls: { url: string; pageUrl?: string }[]): Promi
   )
 }
 
+/**
+ * Serves a proxied image to something that is not the Electron renderer.
+ *
+ * The phone cannot resolve `jarvis-media://` — that scheme exists only inside
+ * this process. Rather than send phones to publishers directly (which would
+ * leak the user's location and lose to hotlink protection, the two problems the
+ * proxy was built to solve), the mobile server hands the same payload here and
+ * streams back what the desktop already has on disk.
+ */
+export async function resolveForHttp(
+  payload: string
+): Promise<{ path: string; type: string } | null> {
+  let remote = ''
+  let referrer: string | null = null
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      u: string
+      r: string | null
+    }
+    remote = parsed.u
+    referrer = parsed.r
+  } catch {
+    return null
+  }
+  if (!/^https?:\/\//i.test(remote)) return null
+  if (!imageAllowed(remote, '', referrer ?? '')) return null
+  return fetchAndCache(remote, referrer)
+}
+
 export { SCHEME as MEDIA_SCHEME }
