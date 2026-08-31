@@ -168,7 +168,27 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb)
 }
 
+/**
+ * Whether an address belongs to a network JARVIS is willing to serve.
+ *
+ * Used as a second check on every accepted connection, because the set of
+ * addresses on a machine changes while it is running — joining a network, a VPN
+ * coming up — and a socket bound at start-up cannot know about that.
+ */
+export function isPrivateAddress(addr: string): boolean {
+  const a = addr.replace(/^::ffff:/, '')
+  if (a === '127.0.0.1' || a === '::1') return true
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(a)) return true // mesh
+  if (/^10\./.test(a)) return true
+  if (/^192\.168\./.test(a)) return true
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(a)) return true
+  if (/^fe80:/i.test(a)) return true // link-local
+  if (/^f[cd]/i.test(a)) return true // unique local
+  return false
+}
+
 export class MobileServer {
+  private servers: Server[] = []
   private server: Server | null = null
   private clients = new Map<string, Client>()
   private devices = new Map<string, Device>()
@@ -187,7 +207,7 @@ export class MobileServer {
   /** Where paired devices are remembered between runs. */
   private storePath(): string {
     const d = join(app.getPath('userData'), 'mobile')
-    mkdirSync(d, { recursive: true })
+    mkdirSync(d, { recursive: true, mode: 0o700 })
     return join(d, 'devices.json')
   }
 
@@ -202,7 +222,8 @@ export class MobileServer {
 
   private persist(): void {
     try {
-      writeFileSync(this.storePath(), JSON.stringify([...this.devices.values()]))
+      // Token hashes and push endpoints. Not readable by anything else.
+      writeFileSync(this.storePath(), JSON.stringify([...this.devices.values()]), { mode: 0o600 })
     } catch {
       /* not fatal */
     }
@@ -236,7 +257,7 @@ export class MobileServer {
 
   state(): MobileState {
     return {
-      running: this.server !== null,
+      running: this.servers.length > 0,
       port: PORT,
       urls: this.urls(),
       reachable: configuredHost() !== null || addresses().some((a) => a.kind === 'mesh'),
@@ -244,7 +265,7 @@ export class MobileServer {
       pairingCode: Date.now() < this.pairingExpiresAt ? this.pairingCode : null,
       pairingExpiresAt: Date.now() < this.pairingExpiresAt ? this.pairingExpiresAt : null,
       fingerprint: this.fingerprint,
-      qr: this.server ? toDataUri(this.pairingUrl()) : null,
+      qr: this.servers.length > 0 ? toDataUri(this.pairingUrl()) : null,
       devices: [...this.devices.values()].map((d) => ({
         id: d.id,
         name: d.name,
@@ -567,10 +588,12 @@ export class MobileServer {
             res.end(JSON.stringify({ ok: false, error: 'not a JPEG' }))
             return
           }
+          // Photographs of whatever the user pointed a camera at — as
+          // sensitive as a screenshot, and treated the same way.
           const dir = join(app.getPath('userData'), 'captures')
-          mkdirSync(dir, { recursive: true })
+          mkdirSync(dir, { recursive: true, mode: 0o700 })
           const path = join(dir, `capture-${Date.now()}.jpg`)
-          writeFileSync(path, bytes)
+          writeFileSync(path, bytes, { mode: 0o600 })
           log(`mobile: capture from "${device.name}" (${Math.round(bytes.length / 1024)}KB)`)
 
           const result = this.handler
@@ -625,7 +648,7 @@ export class MobileServer {
   }
 
   start(): MobileState {
-    if (this.server) return this.state()
+    if (this.servers.length > 0) return this.state()
     const hosts = lanAddresses()
 
     // A trusted certificate, when the mesh can issue one. This is what removes
@@ -650,10 +673,20 @@ export class MobileServer {
     }
     this.fingerprint = cert.fingerprint
 
-    const server = createServer({ key: cert.key, cert: cert.cert }, (req, res) => {
+    const handler = (req: IncomingMessage, res: ServerResponse): void => {
       // No cross-origin access at all: the client is served from this origin.
       res.setHeader('X-Frame-Options', 'DENY')
       res.setHeader('Referrer-Policy', 'no-referrer')
+
+      // Belt and braces: refuse anything that did not come from a private or
+      // mesh address, whatever socket it arrived on.
+      const from = req.socket.remoteAddress ?? ''
+      if (!isPrivateAddress(from)) {
+        log(`mobile: refused a connection from ${from} — not a private address`)
+        res.writeHead(403).end()
+        return
+      }
+
       this.route(req, res).catch((err) => {
         log(`mobile: request failed — ${err instanceof Error ? err.message : err}`)
         try {
@@ -662,21 +695,34 @@ export class MobileServer {
           /* already sent */
         }
       })
-    })
+    }
 
-    server.on('error', (err) => log(`mobile server error: ${err.message}`))
-    // Bound to every interface, but only private addresses are advertised and
-    // the certificate only covers those.
-    server.listen(PORT, () => {
+    /*
+     * One listener per private address, rather than one on every interface.
+     *
+     * `listen(PORT)` with no host binds to 0.0.0.0, which is fine behind a home
+     * router and exactly wrong anywhere the machine has a public address — a
+     * café, a hotel, a phone hotspot, a university network. Advertising only
+     * private URLs limits what the user is told, not who can connect. Binding
+     * the sockets themselves is what actually limits that.
+     */
+    const bindTo = ['127.0.0.1', ...addresses().map((a) => a.host)]
+    for (const host of bindTo) {
+      const server = createServer({ key: cert.key, cert: cert.cert }, handler)
+      server.on('error', (err) => log(`mobile server error on ${host}: ${err.message}`))
+      server.listen(PORT, host)
+      this.servers.push(server)
+    }
+    this.server = this.servers[0] ?? null
+    setTimeout(() => {
       const mesh = addresses().filter((a) => a.kind === 'mesh')
-      log(`mobile: listening on ${this.urls().join(' ')}`)
+      log(`mobile: listening on ${bindTo.join(', ')} — private addresses only`)
       log(
         mesh.length > 0 || configuredHost()
           ? 'mobile: reachable from outside this network over the mesh'
           : 'mobile: reachable on this network only — install Tailscale for remote access'
       )
-    })
-    this.server = server
+    }, 0)
     return this.state()
   }
 
@@ -689,7 +735,8 @@ export class MobileServer {
       }
     }
     this.clients.clear()
-    this.server?.close()
+    for (const s of this.servers) s.close()
+    this.servers = []
     this.server = null
     this.stopPairing()
     log('mobile: stopped')

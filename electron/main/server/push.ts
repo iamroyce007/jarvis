@@ -2,7 +2,7 @@ import {
   createECDH, createHmac, createCipheriv, createSign,
   generateKeyPairSync, randomBytes, createPublicKey, createPrivateKey
 } from 'node:crypto'
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { log } from '../log.js'
@@ -43,7 +43,7 @@ let vapid: Vapid | null = null
 export function vapidKeys(): Vapid {
   if (vapid) return vapid
   const dir = join(app.getPath('userData'), 'push')
-  mkdirSync(dir, { recursive: true })
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
   const file = join(dir, 'vapid.json')
   if (existsSync(file)) {
     try {
@@ -61,7 +61,14 @@ export function vapidKeys(): Vapid {
     publicKey: b64(raw),
     privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) as string
   }
-  writeFileSync(file, JSON.stringify(vapid))
+  // The private half signs every notification this machine sends; it is not
+  // something other processes on the box need to be able to read.
+  writeFileSync(file, JSON.stringify(vapid), { mode: 0o600 })
+  try {
+    chmodSync(dir, 0o700)
+  } catch {
+    /* best effort */
+  }
   log('push: generated a new VAPID identity')
   return vapid
 }

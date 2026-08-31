@@ -24,6 +24,7 @@ export interface SweepReport {
   screenshotBytes: number
   mediaFiles: number
   mediaBytes: number
+  captures: number
   logBytes: number
   explanations: number
   briefings: number
@@ -76,6 +77,21 @@ const LOG_MAX_BYTES = 2 * 1024 * 1024
  */
 const SCREENSHOT_DIRS = ['/tmp', tmpdir(), join(homedir(), 'Desktop')]
 const SCREENSHOT_NAME = /^(jarvis[-_].*\.(png|jpg|jpeg)|screen ?shot.*\.(png|jpg|jpeg))$/i
+
+/**
+ * Photographs sent from the phone's camera.
+ *
+ * These are whatever the user pointed a lens at — a document, a screen, a
+ * letter — so they are as sensitive as a screen capture and get the same short
+ * leash. Nothing was collecting them.
+ */
+function captureDir(): string {
+  try {
+    return join(app.getPath('userData'), 'captures')
+  } catch {
+    return join(homedir(), 'Library', 'Application Support', 'JARVIS', 'captures')
+  }
+}
 
 function mediaDir(): string {
   try {
@@ -163,8 +179,8 @@ function trimToSize(dir: string, maxBytes: number): { count: number; bytes: numb
 export function purgeScreenshots(): { count: number; bytes: number } {
   let count = 0
   let bytes = 0
-  for (const dir of new Set(SCREENSHOT_DIRS)) {
-    const r = sweepDir(dir, SCREENSHOT_NAME, 0)
+  for (const dir of [...new Set(SCREENSHOT_DIRS), captureDir()]) {
+    const r = sweepDir(dir, dir === captureDir() ? /\.jpe?g$/i : SCREENSHOT_NAME, 0)
     count += r.count
     bytes += r.bytes
   }
@@ -190,6 +206,7 @@ export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
     screenshotBytes: 0,
     mediaFiles: 0,
     mediaBytes: 0,
+    captures: 0,
     logBytes: 0,
     explanations: 0,
     briefings: 0,
@@ -204,6 +221,15 @@ export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
     report.screenshots += r.count
     report.screenshotBytes += r.bytes
   }
+
+  // --- camera captures, on the same short leash as screenshots -------------
+  const captures = sweepDir(
+    captureDir(),
+    /\.jpe?g$/i,
+    opts.aggressive ? 0 : SCREENSHOT_MAX_AGE
+  )
+  report.captures = captures.count
+  report.screenshotBytes += captures.bytes
 
   // --- scraped imagery -----------------------------------------------------
   const media = sweepDir(mediaDir(), /./, opts.aggressive ? 0 : MEDIA_MAX_AGE)
@@ -267,7 +293,8 @@ export function sweep(opts: { aggressive?: boolean } = {}): SweepReport {
   }
 
   log(
-    `janitor: ${report.screenshots} screenshots, ${report.mediaFiles} cached images ` +
+    `janitor: ${report.screenshots} screenshots, ${report.captures} captures, ` +
+      `${report.mediaFiles} cached images ` +
       `(${Math.round(report.mediaBytes / 1024 / 1024)}MB), ${report.explanations} stories, ` +
       `${report.briefings} briefings, ${report.transcriptTurns} transcript turns, ` +
       `${report.errorRows} error rows, ${report.usageRows} usage rows` +

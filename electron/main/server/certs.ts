@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { log } from '../log.js'
@@ -28,7 +28,12 @@ export interface Certificate {
 
 function dir(): string {
   const d = join(app.getPath('userData'), 'tls')
-  mkdirSync(d, { recursive: true })
+  mkdirSync(d, { recursive: true, mode: 0o700 })
+  try {
+    chmodSync(d, 0o700)
+  } catch {
+    /* best effort */
+  }
   return d
 }
 
@@ -181,6 +186,13 @@ export function ensureCertificate(hosts: string[]): Certificate | null {
       )
       log(`tls: issued certificate for ${wanted.join(', ')}`)
       writeFileSync(hostsPath, JSON.stringify(wanted))
+      // openssl writes the key world-readable. It is the server's identity:
+      // anyone who can read it can impersonate JARVIS to the phone.
+      try {
+        chmodSync(keyPath, 0o600)
+      } catch {
+        /* best effort */
+      }
     } catch (err) {
       log(`tls: could not generate certificate — ${err instanceof Error ? err.message : err}`)
       return null
