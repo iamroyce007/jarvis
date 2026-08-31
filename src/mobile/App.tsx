@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Explanation, JarvisState } from '../../shared/types'
-import { pair, isPaired, onConnection, type Connection } from './transport'
-import { PhoneVoice, speak, shutUp, speechSupported } from './voice'
+import {
+  pair, isPaired, onConnection, sendCapture, enableNotifications, type Connection
+} from './transport'
+import { PhoneVoice, speak, shutUp, speechSupported, unlockAudio, audioUnlocked } from './voice'
 import MobileStoryboard from './Storyboard'
+import Camera from './Camera'
 
 /**
  * JARVIS, on the phone.
@@ -38,10 +41,37 @@ export default function App(): JSX.Element {
   const [halted, setHalted] = useState(false)
   const [listening, setListening] = useState(false)
   const [text, setText] = useState('')
+  const [camera, setCamera] = useState(false)
+  const [watches, setWatches] = useState<{ id: string; subject: string; unread: number }[]>([])
+  const [alert, setAlert] = useState<{ subject: string; count: number } | null>(null)
+  const [notifyState, setNotifyState] = useState<string | null>(null)
 
   const voice = useRef<PhoneVoice | null>(null)
 
   useEffect(() => onConnection(setConn), [])
+
+  /**
+   * The first touch anywhere unlocks speech.
+   *
+   * Tying it only to the ask field and the microphone meant someone who opened
+   * a stored investigation and never typed heard nothing at all, because
+   * everything JARVIS says arrives on an event rather than a gesture.
+   */
+  useEffect(() => {
+    const once = (): void => {
+      unlockAudio()
+      if (audioUnlocked()) {
+        window.removeEventListener('pointerdown', once)
+        window.removeEventListener('touchend', once)
+      }
+    }
+    window.addEventListener('pointerdown', once)
+    window.addEventListener('touchend', once)
+    return () => {
+      window.removeEventListener('pointerdown', once)
+      window.removeEventListener('touchend', once)
+    }
+  }, [])
 
   // ---- the shared event stream ------------------------------------------
   useEffect(() => {
@@ -49,6 +79,7 @@ export default function App(): JSX.Element {
     const api = window.jarvis
     void api.getState?.().then(setState).catch(() => undefined)
     void loadRecent()
+    void loadWatches()
 
     const off = [
       api.onState?.(setState),
@@ -85,11 +116,29 @@ export default function App(): JSX.Element {
         setHalted(true)
         setTimeout(() => setHalted(false), 2200)
       }),
+      // §17 — a development is an event, not a badge on a tab.
+      api.onWatchDevelopment?.((d: unknown) => {
+        const dev = d as { watch: { subject: string }; findings: unknown[] }
+        setAlert({ subject: dev.watch.subject, count: dev.findings.length })
+        speak(`A significant development in ${dev.watch.subject}.`)
+        void loadWatches()
+      }),
       api.onError?.((m: unknown) => setNotice(String(m))),
       api.onVoiceError?.((m: unknown) => setNotice(String(m)))
     ]
     return () => off.forEach((f) => typeof f === 'function' && f())
   }, [paired])
+
+  async function loadWatches(): Promise<void> {
+    try {
+      const rows = (await window.jarvis.watchList?.()) as
+        | { id: string; subject: string; unread: number }[]
+        | undefined
+      setWatches(rows ?? [])
+    } catch {
+      /* the workstation may still be starting */
+    }
+  }
 
   async function loadRecent(): Promise<void> {
     try {
@@ -104,6 +153,8 @@ export default function App(): JSX.Element {
 
   // ---- asking -----------------------------------------------------------
   const ask = useCallback(async (utterance: string) => {
+    // Asking is a gesture, so it is a chance to let the phone make a sound.
+    unlockAudio()
     const clean = utterance.trim()
     if (!clean) return
     setText('')
@@ -119,6 +170,7 @@ export default function App(): JSX.Element {
 
   // ---- voice ------------------------------------------------------------
   const toggleVoice = useCallback(() => {
+    unlockAudio()
     if (!voice.current) {
       const v = new PhoneVoice()
       v.on = {
@@ -219,6 +271,17 @@ export default function App(): JSX.Element {
               />
               <button
                 type="button"
+                className="m-cam"
+                onClick={() => {
+                  unlockAudio()
+                  setCamera(true)
+                }}
+                aria-label="Show JARVIS something"
+              >
+                <CamIcon />
+              </button>
+              <button
+                type="button"
                 className={`m-mic ${listening ? 'on' : ''}`}
                 onClick={toggleVoice}
                 aria-label={listening ? 'Stop listening' : 'Speak to JARVIS'}
@@ -243,6 +306,46 @@ export default function App(): JSX.Element {
             <span>{drawer ? 'Close' : 'Recent intelligence'}</span>
           </div>
           <div className="m-drawer-body">
+            <div className="m-section">Watching</div>
+            {watches.length === 0 ? (
+              <div className="m-empty">
+                Nothing is being watched. Say &ldquo;watch this for changes&rdquo; during an
+                investigation and JARVIS will keep looking after you have moved on.
+              </div>
+            ) : (
+              watches.map((w) => (
+                <div className="m-item" key={w.id}>
+                  <div className="m-watching" aria-hidden />
+                  <div className="m-item-text">
+                    <div className="m-item-title">{w.subject}</div>
+                    <div className="m-item-sub">
+                      {w.unread > 0 ? `${w.unread} new` : 'No significant changes'}
+                    </div>
+                  </div>
+                  <button
+                    className="m-unwatch"
+                    onClick={() => {
+                      void window.jarvis.watchRemove?.(w.id).then(() => void loadWatches())
+                    }}
+                  >
+                    Stop
+                  </button>
+                </div>
+              ))
+            )}
+
+            <div className="m-section">Alerts</div>
+            <button
+              className="m-notify"
+              onClick={() => {
+                void enableNotifications().then((r) =>
+                  setNotifyState(r.ok ? 'On — JARVIS can reach you when the app is closed.' : (r.reason ?? null))
+                )
+              }}
+            >
+              {notifyState ?? 'Let JARVIS notify me'}
+            </button>
+
             <div className="m-section">Recent intelligence</div>
             {recent.length === 0 ? (
               <div className="m-empty">
@@ -276,6 +379,42 @@ export default function App(): JSX.Element {
         </div>
       )}
 
+      {camera && (
+        <Camera
+          onClose={() => setCamera(false)}
+          onCapture={async (jpeg, note) => {
+            setProgress('Looking at your photo')
+            await sendCapture(jpeg, note)
+          }}
+        />
+      )}
+
+      {alert && (
+        <div className="m-alert" onClick={() => setAlert(null)}>
+          <div className="m-alert-body" onClick={(e) => e.stopPropagation()}>
+            <div className="m-alert-mark">JARVIS</div>
+            <strong>A significant development.</strong>
+            <p>
+              {alert.count} new {alert.count === 1 ? 'record' : 'records'} for{' '}
+              <em>{alert.subject}</em>.
+            </p>
+            <div className="m-alert-actions">
+              <button onClick={() => setAlert(null)}>Later</button>
+              <button
+                className="primary"
+                onClick={() => {
+                  const subject = alert.subject
+                  setAlert(null)
+                  void ask(`What changed with ${subject}?`)
+                }}
+              >
+                Show me
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {halted && (
         <div className="m-halted">
           <div>
@@ -305,6 +444,15 @@ function Core({
       <div className="m-core-ring slow" />
       <div className="m-core-eye" />
     </div>
+  )
+}
+
+function CamIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2L8 5h8l1.5 2h2A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z" strokeLinejoin="round" />
+      <circle cx="12" cy="12.5" r="3.4" />
+    </svg>
   )
 }
 

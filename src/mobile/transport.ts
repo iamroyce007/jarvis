@@ -246,6 +246,11 @@ const METHODS: Record<string, string> = {
   getHistory: 'history:recent',
   searchHistory: 'history:search',
   getErrors: 'errors:recent',
+  watchAdd: 'watch:add',
+  watchRemove: 'watch:remove',
+  watchList: 'watch:list',
+  watchFindings: 'watch:findings',
+  watchSeen: 'watch:seen',
   mobileState: 'mobile:state'
 }
 
@@ -273,7 +278,8 @@ const EVENTS: Record<string, string> = {
   onGraphUpdated: 'graph-updated',
   onHalted: 'halted',
   onCapabilities: 'capabilities',
-  onBudget: 'budget'
+  onBudget: 'budget',
+  onWatchDevelopment: 'watch-development'
 }
 
 /**
@@ -284,6 +290,68 @@ const EVENTS: Record<string, string> = {
  * being absent: a component that calls one should fail loudly here instead of
  * crashing on `undefined is not a function` somewhere in a render.
  */
+/**
+ * Uploads a camera capture (§21).
+ *
+ * Separate from the RPC channel because it carries a megabyte or so of image
+ * rather than a small JSON argument, and it wants its own size limit.
+ */
+export async function sendCapture(jpegBase64: string, note: string): Promise<void> {
+  const t = token()
+  if (!t) throw new Error('unpaired')
+  const res = await fetch('/api/capture', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+    body: JSON.stringify({ image: jpegBase64, note })
+  })
+  const body = (await res.json().catch(() => ({ ok: false, error: 'no response' }))) as {
+    ok: boolean
+    error?: string
+  }
+  if (!body.ok) throw new Error(body.error ?? 'the workstation refused the capture')
+}
+
+/**
+ * Subscribes this device to notifications (§18).
+ *
+ * On iOS this only works once the app has been added to the Home Screen, and
+ * permission must be requested from a user gesture — so this is called from a
+ * tap, never on load.
+ */
+export async function enableNotifications(): Promise<{ ok: boolean; reason?: string }> {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return { ok: false, reason: 'This browser cannot receive notifications.' }
+  }
+  // iOS grants push only to an installed web app, and says so unhelpfully.
+  const standalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (navigator as unknown as { standalone?: boolean }).standalone === true
+  if (!standalone && /iPhone|iPad/.test(navigator.userAgent)) {
+    return { ok: false, reason: 'Add JARVIS to your Home Screen first, then open it from there.' }
+  }
+
+  const permission = await Notification.requestPermission()
+  if (permission !== 'granted') return { ok: false, reason: 'Notifications were not allowed.' }
+
+  const t = token()
+  const reg = await navigator.serviceWorker.ready
+  const keyRes = await fetch('/api/push/key', { headers: { Authorization: `Bearer ${t}` } })
+  const { key } = (await keyRes.json()) as { key: string }
+
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
+      c.charCodeAt(0)
+    )
+  })
+  await fetch('/api/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+    body: JSON.stringify({ subscription: sub.toJSON() })
+  })
+  return { ok: true }
+}
+
 export function installBridge(): void {
   const api: Record<string, unknown> = {}
 

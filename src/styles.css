@@ -826,3 +826,13 @@ body::before {
   line-height: 1.5;
   color: var(--ink-faint);
 }
+
+.pair-good {
+  padding: 11px 13px;
+  margin-bottom: 14px;
+  border-radius: var(--r-md);
+  background: rgba(82, 224, 168, 0.07);
+  border: 1px solid rgba(82, 224, 168, 0.22);
+  color: var(--ink-soft);
+}
+.pair-good code { color: var(--ok); background: none; }

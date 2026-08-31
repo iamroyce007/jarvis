@@ -198,8 +198,49 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
   }
 }
 
-export function speak(text: string): void {
-  if (!window.speechSynthesis || !text.trim()) return
+/**
+ * Whether iOS has let us make a sound yet.
+ *
+ * Safari refuses to synthesise speech that no user gesture asked for, and it
+ * refuses *silently* — `speak()` returns, the utterance queues, and nothing is
+ * heard. Everything JARVIS says arrives on an event from the workstation, which
+ * is by definition not a gesture, so without this the phone was mute: the whole
+ * answer was there on screen and none of it was ever spoken.
+ *
+ * The unlock is one silent utterance issued from inside a real touch. After
+ * that the browser considers the page allowed to make noise and everything
+ * queued plays normally.
+ */
+let unlocked = false
+let pending: string[] = []
+
+export function audioUnlocked(): boolean {
+  return unlocked
+}
+
+/**
+ * Call from a genuine user gesture — a tap, not a timer or an event handler.
+ * Safe to call repeatedly; it does nothing once the unlock has taken.
+ */
+export function unlockAudio(): void {
+  if (unlocked || !window.speechSynthesis) return
+  try {
+    // A space rather than an empty string: some builds discard an empty
+    // utterance without treating it as the gesture-blessed first one.
+    const primer = new SpeechSynthesisUtterance(' ')
+    primer.volume = 0
+    window.speechSynthesis.speak(primer)
+    unlocked = true
+    // Anything JARVIS said while we were mute is spoken now, in order.
+    const queued = pending
+    pending = []
+    for (const text of queued) say(text)
+  } catch {
+    /* left locked; the next gesture tries again */
+  }
+}
+
+function say(text: string): void {
   const u = new SpeechSynthesisUtterance(text)
   if (voice) u.voice = voice
   u.rate = 1.0
@@ -207,11 +248,45 @@ export function speak(text: string): void {
   window.speechSynthesis.speak(u)
 }
 
+/**
+ * Speaks, or holds it until audio is unlocked.
+ *
+ * Only the most recent few lines are held: coming back to a phone that then
+ * recites everything it wanted to say ten minutes ago would be worse than
+ * silence.
+ */
+export function speak(text: string): void {
+  if (!window.speechSynthesis || !text.trim()) return
+  if (!unlocked) {
+    pending.push(text)
+    if (pending.length > 3) pending.shift()
+    return
+  }
+  say(text)
+}
+
 /** Barge-in: drop everything queued and stop mid-word. */
 export function shutUp(): void {
+  pending = []
   try {
     window.speechSynthesis?.cancel()
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Safari stops synthesising after the screen locks or the app is backgrounded,
+ * and stays stopped even once it is visible again. Nudging the queue on return
+ * is the documented way out of it.
+ */
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return
+    try {
+      if (window.speechSynthesis?.paused) window.speechSynthesis.resume()
+    } catch {
+      /* ignore */
+    }
+  })
 }

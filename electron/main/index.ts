@@ -10,6 +10,7 @@ import {
   systemPreferences
 } from 'electron'
 import { join, dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { homedir, tmpdir } from 'node:os'
 import { existsSync, readdirSync, statSync } from 'node:fs'
@@ -51,11 +52,15 @@ import { extractFromExchange } from './intelligence/extract.js'
 import { research, recentBriefings, getBriefing, isBriefingRunning } from './intelligence/briefing.js'
 import { explain, isExplaining, recentExplanations, getExplanation, warmWorkers } from './intelligence/explain.js'
 import { showMeSubject, spotlight } from './intelligence/spotlight.js'
-import { routeIntent, needsResearch, type ViewIntent } from './intelligence/intent.js'
+import { routeIntent, needsResearch, currentSubject, type ViewIntent } from './intelligence/intent.js'
 import { budget, claimResearch, refundResearch } from './intelligence/budget.js'
 import { startJanitor, stopJanitor, sweep, purgeScreenshots } from './maintenance/janitor.js'
 import { Compactor } from './claude/compact.js'
 import { MobileServer } from './server/mobile.js'
+import {
+  addWatch, removeWatch, listWatches, recentFindings, markFindingsSeen,
+  checkWatch, startWatching, stopWatching
+} from './intelligence/watches.js'
 import { queryAllowed, gateCommand, unlock, lock, isUnlocked, REFUSAL } from './intelligence/safety.js'
 import { project, isProjecting } from './intelligence/scenarios.js'
 import { setSessionTools, setNativeAvailability, toolRegistry } from './intelligence/tools.js'
@@ -358,6 +363,27 @@ function wireEvents(): void {
       void compactor.compactNow().then((did) => {
         if (did) send('session', sessionInfo())
       })
+      return
+    }
+
+    // "Watch this for changes" — a standing instruction, not a question (§17).
+    const watchAsk = /^(?:jarvis[,\s]+)?(?:watch|keep an eye on|monitor|track|alert me (?:about|on|to)|let me know (?:about|if))\s+(?:this|that|it|for changes)?\s*(.*)$/i.exec(
+      text.trim()
+    )
+    if (watchAsk) {
+      const named = watchAsk[1]?.replace(/\s+for changes$/i, '').trim()
+      const subject = named && named.length > 1 ? named : (currentSubject() ?? '')
+      if (!subject) {
+        voice.speak('Watch what, exactly?')
+        return
+      }
+      const w = addWatch(subject)
+      if (w) {
+        voice.speak(`Watching ${subject}. I'll tell you if anything changes.`)
+        send('watch-list', listWatches())
+      } else {
+        voice.speak("I can't watch that one.")
+      }
       return
     }
 
@@ -947,6 +973,57 @@ function registerIpc(): void {
     return await (fn as (e: unknown, ...a: unknown[]) => unknown)(null, ...args)
   })
 
+  /**
+   * A photograph taken on the phone (§21).
+   *
+   * The phone is a sensor; the reasoning stays here. This hands Claude the file
+   * path and lets it look, exactly as it does with a screenshot of this screen —
+   * the model reads the image itself rather than the phone trying to describe it.
+   */
+  handle('capture:investigate', async (_e: unknown, path: string, note: string) => {
+    const instruction =
+      `The user just photographed something with their phone and sent it over. ` +
+      `Read the image at ${path} with your image tool and act on it.\n\n` +
+      (note
+        ? `They said: "${note}"`
+        : 'They did not say what they want. Work out what it is and tell them ' +
+          'what is worth knowing about it, briefly.')
+    log(`capture: investigating ${path}${note ? ` — "${note}"` : ''}`)
+    send('activity', {
+      id: randomUUID(),
+      label: 'Looking at your photo',
+      status: 'running',
+      at: Date.now()
+    })
+    await orchestrator.ask(instruction)
+    return { ok: true }
+  })
+
+  // ---- watches (§17) ---------------------------------------------------
+  handle('watch:add', (_e: unknown, subject: string) => addWatch(subject))
+  handle('watch:remove', (_e: unknown, id: string) => removeWatch(id))
+  handle('watch:list', () => listWatches())
+  handle('watch:findings', (_e: unknown, limit?: number) => recentFindings(limit ?? 30))
+  handle('watch:seen', (_e: unknown, id?: string) => markFindingsSeen(id))
+  handle('watch:check', async (_e: unknown, id: string) => checkWatch(id))
+
+  /**
+   * A development, wherever the user happens to be.
+   *
+   * The desktop gets the detail on its own event channel. The phone gets a
+   * notification that says only that something changed and where — the body of
+   * a push is handled by a third-party service and displayed on a lock screen,
+   * so the finding itself stays inside the app.
+   */
+  startWatching((dev) => {
+    send('watch-development', dev)
+    void mobile.notify(
+      'JARVIS',
+      `A significant development in ${dev.watch.subject}.`,
+      { watchId: dev.watch.id, subject: dev.watch.subject }
+    )
+  })
+
   handle('mobile:state', () => mobile.state())
   handle('mobile:start', () => mobile.start())
   handle('mobile:stop', () => {
@@ -1130,6 +1207,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   stopJanitor()
+  stopWatching()
   mobile.stop()
   // Screen captures can contain anything that was on screen. None of them
   // outlive the session.

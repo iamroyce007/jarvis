@@ -51,6 +51,15 @@ declare global {
       mobileStop(): Promise<unknown>
       mobilePair(): Promise<unknown>
       mobileRevoke(id: string): Promise<boolean>
+
+      // Watches (§17). Present on both surfaces; the phone reaches them over
+      // the same bridge the desktop uses.
+      watchAdd(subject: string): Promise<unknown>
+      watchRemove(id: string): Promise<boolean>
+      watchList(): Promise<{ id: string; subject: string; unread: number }[]>
+      watchFindings(limit?: number): Promise<unknown[]>
+      watchSeen(id?: string): Promise<void>
+      onWatchDevelopment(cb: (d: unknown) => void): () => void
       setPersonality(p: string): Promise<SessionInfo>
       onIntent(cb: (i: IntentInfo) => void): () => void
       onProjection(cb: (p: Projection) => void): () => void

@@ -9,6 +9,8 @@ import { log } from '../log.js'
 import { ensureCertificate } from './certs.js'
 import { resolveForHttp } from '../media/proxy.js'
 import { toDataUri } from './qr.js'
+import { vapidKeys, send as pushSend, type Subscription } from './push.js'
+import { meshStatus, issueMeshCertificate, type MeshStatus } from './tailscale.js'
 
 /**
  * The mobile bridge.
@@ -48,6 +50,8 @@ export interface MobileState {
   fingerprint: string | null
   /** True when at least one advertised address works away from this network. */
   reachable: boolean
+  /** How things stand for reaching JARVIS from outside this network. */
+  mesh: MeshStatus
   /**
    * The best address as a scannable code.
    *
@@ -66,6 +70,8 @@ interface Device {
   tokenHash: string
   pairedAt: number
   lastSeen: number
+  /** Where to reach this device when the app is closed (§18). */
+  push?: Subscription
 }
 
 interface Client {
@@ -140,7 +146,11 @@ function addresses(): Address[] {
  */
 function configuredHost(): string | null {
   const h = process.env.JARVIS_MOBILE_HOST?.trim()
-  return h && h.length > 0 ? h : null
+  if (h && h.length > 0) return h
+  // Otherwise use the mesh name, which works from anywhere and can carry a
+  // genuinely trusted certificate.
+  const mesh = meshStatus()
+  return mesh.running && mesh.hostname ? mesh.hostname : null
 }
 
 function lanAddresses(): string[] {
@@ -230,6 +240,7 @@ export class MobileServer {
       port: PORT,
       urls: this.urls(),
       reachable: configuredHost() !== null || addresses().some((a) => a.kind === 'mesh'),
+      mesh: meshStatus(),
       pairingCode: Date.now() < this.pairingExpiresAt ? this.pairingCode : null,
       pairingExpiresAt: Date.now() < this.pairingExpiresAt ? this.pairingExpiresAt : null,
       fingerprint: this.fingerprint,
@@ -277,6 +288,26 @@ export class MobileServer {
     }
     if (had) this.persist()
     return had
+  }
+
+  /**
+   * Notifies every subscribed device, whether or not the app is open (§18).
+   *
+   * Deliberately thin on detail: a notification is delivered by a third-party
+   * push service and shown on a lock screen, so it says that something happened
+   * and which investigation, never what was found.
+   */
+  async notify(title: string, body: string, data: Record<string, unknown> = {}): Promise<void> {
+    for (const device of this.devices.values()) {
+      if (!device.push) continue
+      const result = await pushSend(device.push, { title, body, data })
+      if (result.gone) {
+        // The browser threw the subscription away; stop trying.
+        log(`push: subscription for "${device.name}" is gone, forgetting it`)
+        device.push = undefined
+        this.persist()
+      }
+    }
   }
 
   /** Pushes an event to every connected phone. */
@@ -482,6 +513,80 @@ export class MobileServer {
         return
       }
 
+      // ---- push subscription (§18) ---------------------------------------
+      if (url.pathname === '/api/push' && req.method === 'POST') {
+        try {
+          const body = JSON.parse(await this.readBody(req, 8192)) as {
+            subscription?: Subscription
+          }
+          device.push = body.subscription
+          this.persist()
+          log(
+            body.subscription
+              ? `mobile: "${device.name}" subscribed to notifications`
+              : `mobile: "${device.name}" unsubscribed from notifications`
+          )
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true }))
+        } catch {
+          res.writeHead(400).end()
+        }
+        return
+      }
+
+      if (url.pathname === '/api/push/key' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ key: vapidKeys().publicKey }))
+        return
+      }
+
+      // ---- a capture from the phone's camera (§21) -----------------------
+      // The image is written to disk and its path handed to the RPC layer, so
+      // the workstation reads it the same way it reads a screenshot of its own
+      // screen. Uploads are capped and always JPEG — this endpoint accepts a
+      // photograph, not arbitrary bytes.
+      if (url.pathname === '/api/capture' && req.method === 'POST') {
+        let body: { image?: string; note?: string }
+        try {
+          body = JSON.parse(await this.readBody(req, 12 * 1024 * 1024)) as typeof body
+        } catch {
+          res.writeHead(413, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'capture too large' }))
+          return
+        }
+        if (!body.image) {
+          res.writeHead(400).end()
+          return
+        }
+        try {
+          const bytes = Buffer.from(body.image, 'base64')
+          // A JPEG starts FF D8 FF. Checking is cheap and means a mislabelled
+          // upload cannot become a file of another type on the user's disk.
+          if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+            res.writeHead(415, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: false, error: 'not a JPEG' }))
+            return
+          }
+          const dir = join(app.getPath('userData'), 'captures')
+          mkdirSync(dir, { recursive: true })
+          const path = join(dir, `capture-${Date.now()}.jpg`)
+          writeFileSync(path, bytes)
+          log(`mobile: capture from "${device.name}" (${Math.round(bytes.length / 1024)}KB)`)
+
+          const result = this.handler
+            ? await this.handler('capture:investigate', [path, body.note ?? ''])
+            : null
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, result: result ?? null }))
+        } catch (err) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({ ok: false, error: err instanceof Error ? err.message : 'failed' })
+          )
+        }
+        return
+      }
+
       // ---- RPC ----------------------------------------------------------
       if (url.pathname === '/api/rpc' && req.method === 'POST') {
         let call: { method?: string; args?: unknown[] }
@@ -522,6 +627,22 @@ export class MobileServer {
   start(): MobileState {
     if (this.server) return this.state()
     const hosts = lanAddresses()
+
+    // A trusted certificate, when the mesh can issue one. This is what removes
+    // the "not private" warning on the phone rather than merely making it
+    // dismissible.
+    const mesh = meshStatus()
+    if (mesh.running && mesh.hostname && !process.env.JARVIS_TLS_CERT) {
+      const dir = join(app.getPath('userData'), 'tls')
+      mkdirSync(dir, { recursive: true })
+      const certFile = join(dir, 'mesh.crt')
+      const keyFile = join(dir, 'mesh.key')
+      if (issueMeshCertificate(mesh.hostname, certFile, keyFile)) {
+        process.env.JARVIS_TLS_CERT = certFile
+        process.env.JARVIS_TLS_KEY = keyFile
+      }
+    }
+
     const cert = ensureCertificate(hosts)
     if (!cert) {
       log('mobile: refusing to start without TLS — the phone needs a secure context')

@@ -469,6 +469,7 @@ function PairPhone({ onClose }: { onClose: () => void }): JSX.Element {
     fingerprint: string | null
     reachable: boolean
     qr: string | null
+    mesh: { installed: boolean; running: boolean; hostname: string | null; advice: string | null }
     devices: { id: string; name: string; pairedAt: number }[]
     clients: number
   } | null>(null)
@@ -507,13 +508,13 @@ function PairPhone({ onClose }: { onClose: () => void }): JSX.Element {
           </p>
         ) : (
           <>
-            {!state?.reachable && (
-              <p className="pair-note pair-warn">
-                This address only works on the same Wi-Fi. To reach JARVIS from
-                anywhere, install Tailscale on both this Mac and the iPhone and sign
-                in to the same account — the address below then works everywhere,
-                over an encrypted link, with no port exposed to the internet.
+            {state?.mesh?.running && state.mesh.hostname ? (
+              <p className="pair-note pair-good">
+                Reachable from anywhere as <code>{state.mesh.hostname}</code>, as long as
+                this Mac is awake and signed in to Tailscale.
               </p>
+            ) : (
+              state?.mesh?.advice && <p className="pair-note pair-warn">{state.mesh.advice}</p>
             )}
 
             <ol className="pair-steps">

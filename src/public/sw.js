@@ -41,3 +41,51 @@ self.addEventListener('fetch', (e) => {
       .catch(() => caches.match(e.request).then((hit) => hit ?? caches.match('/')))
   )
 })
+
+/**
+ * A development arrived while the app was closed (§18).
+ *
+ * The notification deliberately carries no findings — it is displayed by the
+ * operating system on a lock screen, so it says that something happened and in
+ * which investigation, and the substance stays inside the app behind the
+ * device's own authentication.
+ */
+self.addEventListener('push', (event) => {
+  let payload = { title: 'JARVIS', body: 'A development was detected.', data: {} }
+  try {
+    if (event.data) payload = { ...payload, ...event.data.json() }
+  } catch {
+    /* keep the default */
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: '/icon-180.png',
+      badge: '/icon-180.png',
+      // Replaces rather than stacks: five notifications about one investigation
+      // is worse than one that is current.
+      tag: payload.data?.watchId || 'jarvis',
+      renotify: true,
+      data: payload.data
+    })
+  )
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const subject = event.notification.data?.subject
+  const url = subject ? `/#watch=${encodeURIComponent(subject)}` : '/'
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      // Focus the app if it is already open rather than opening it twice.
+      for (const client of list) {
+        if (client.url.includes(self.location.origin)) {
+          client.focus()
+          client.navigate(url)
+          return
+        }
+      }
+      return self.clients.openWindow(url)
+    })
+  )
+})

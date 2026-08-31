@@ -507,3 +507,240 @@ body {
   .m-stop.armed { animation: none; }
   .m-drawer { transition-duration: 0.01ms; }
 }
+
+/* ══════════════════════════════════════════════════════════ CAMERA (§21) */
+.m-cam {
+  flex: none;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-edge);
+  background: var(--surface-glass);
+  color: var(--ink-soft);
+  display: grid;
+  place-items: center;
+  transition: transform var(--quick) var(--ease), color var(--quick) var(--ease);
+}
+.m-cam:active { transform: scale(0.94); color: var(--cyan); }
+.m-cam svg { width: 20px; height: 20px; }
+
+.cam {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn var(--quick) var(--ease) both;
+}
+.cam-view,
+.cam-shot {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  object-fit: cover;
+}
+
+/* A reticle, so the user knows what will be captured. */
+.cam-frame {
+  position: absolute;
+  inset: 12% 8% 26%;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+}
+
+.cam-bar {
+  flex: none;
+  padding: 14px 18px calc(20px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, transparent, rgba(2, 5, 9, 0.94) 32%);
+}
+.cam-hint {
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-align: center;
+  margin-bottom: 14px;
+}
+.cam-bar input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-glass);
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 16px;
+  font-family: inherit;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.cam-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.cam-actions button {
+  padding: 12px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-edge);
+  background: var(--surface-glass);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.cam-actions button.primary {
+  border-color: var(--glass-edge-strong);
+  background: linear-gradient(160deg, rgba(79, 214, 255, 0.2), rgba(79, 214, 255, 0.05));
+  color: var(--cyan);
+}
+.cam-actions button:disabled { opacity: 0.45; }
+
+/* The shutter is the one control that should need no label. */
+.cam-actions button.shutter {
+  width: 66px; height: 66px;
+  padding: 0;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid rgba(255, 255, 255, 0.34);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4);
+}
+.cam-actions button.shutter:active { transform: scale(0.92); }
+
+.cam-error {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  gap: 18px;
+  padding: 32px;
+  text-align: center;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* ══════════════════════════════════════════════════════ WATCHES (§17) */
+/*
+ * The indicator for a live watch: slow, quiet, and clearly *doing* something.
+ * A static dot reads as a status light; this reads as attention.
+ */
+.m-watching {
+  flex: none;
+  width: 46px; height: 46px;
+  border-radius: var(--r-md);
+  background: var(--cyan-ghost);
+  border: 1px solid var(--glass-edge);
+  position: relative;
+}
+.m-watching::before,
+.m-watching::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 7px; height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--cyan);
+}
+.m-watching::after {
+  background: none;
+  border: 1px solid var(--cyan);
+  animation: mWatch 2.8s ease-out infinite;
+}
+@keyframes mWatch {
+  0%   { transform: scale(1); opacity: 0.65; }
+  100% { transform: scale(4.2); opacity: 0; }
+}
+
+.m-unwatch {
+  flex: none;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: none;
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  padding: 5px 11px;
+}
+.m-unwatch:active { color: var(--danger); border-color: rgba(255,107,107,0.3); }
+
+.m-notify {
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-glass);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.m-notify:active { border-color: var(--glass-edge-strong); }
+
+/* ── the focused alert: not "you have 1 notification" ── */
+.m-alert {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: rgba(2, 5, 9, 0.86);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: fadeIn var(--normal) var(--ease) both;
+}
+.m-alert-body {
+  width: 100%;
+  max-width: 380px;
+  padding: 26px 24px 20px;
+  border-radius: var(--r-lg);
+  background: var(--surface-panel);
+  border: 1px solid var(--glass-edge-strong);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.66);
+  animation: msUp var(--normal) var(--ease-out) both;
+}
+.m-alert-mark {
+  font-family: 'Outfit', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.32em;
+  color: var(--cyan);
+  margin-bottom: 14px;
+}
+.m-alert-body strong {
+  display: block;
+  font-family: 'Outfit', sans-serif;
+  font-size: 21px;
+  font-weight: 300;
+  color: var(--white);
+  line-height: 1.25;
+}
+.m-alert-body p {
+  margin: 10px 0 20px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+.m-alert-body em { font-style: normal; color: var(--ink); }
+.m-alert-actions { display: flex; gap: 10px; }
+.m-alert-actions button {
+  flex: 1;
+  padding: 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--glass-edge);
+  background: var(--surface-glass);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.m-alert-actions button.primary {
+  border-color: var(--glass-edge-strong);
+  background: linear-gradient(160deg, rgba(79,214,255,0.2), rgba(79,214,255,0.05));
+  color: var(--cyan);
+}
