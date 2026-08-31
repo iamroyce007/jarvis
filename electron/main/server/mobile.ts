@@ -8,6 +8,7 @@ import { app } from 'electron'
 import { log } from '../log.js'
 import { ensureCertificate } from './certs.js'
 import { resolveForHttp } from '../media/proxy.js'
+import { toDataUri } from './qr.js'
 
 /**
  * The mobile bridge.
@@ -47,6 +48,13 @@ export interface MobileState {
   fingerprint: string | null
   /** True when at least one advertised address works away from this network. */
   reachable: boolean
+  /**
+   * The best address as a scannable code.
+   *
+   * Typing `https://192.168.1.251:8787` into a phone keyboard without a typo is
+   * the kind of small friction that stops a feature being used.
+   */
+  qr: string | null
   /** Devices that have completed pairing. */
   devices: { id: string; name: string; pairedAt: number; lastSeen: number }[]
   clients: number
@@ -203,6 +211,19 @@ export class MobileServer {
     return out
   }
 
+  /**
+   * The URL to put in the code.
+   *
+   * While pairing is open the code travels in the fragment, so scanning lands
+   * on a screen with the digits already filled in. A fragment is never sent to
+   * the server, so the code stays out of request logs and off the wire.
+   */
+  private pairingUrl(): string {
+    const base = this.urls()[0] ?? `https://localhost:${PORT}`
+    const open = this.pairingCode && Date.now() < this.pairingExpiresAt
+    return open ? `${base}/#c=${this.pairingCode}` : base
+  }
+
   state(): MobileState {
     return {
       running: this.server !== null,
@@ -212,6 +233,7 @@ export class MobileServer {
       pairingCode: Date.now() < this.pairingExpiresAt ? this.pairingCode : null,
       pairingExpiresAt: Date.now() < this.pairingExpiresAt ? this.pairingExpiresAt : null,
       fingerprint: this.fingerprint,
+      qr: this.server ? toDataUri(this.pairingUrl()) : null,
       devices: [...this.devices.values()].map((d) => ({
         id: d.id,
         name: d.name,

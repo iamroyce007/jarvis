@@ -63,6 +63,46 @@ ${alts}
 }
 
 /**
+ * Whether an existing certificate is worth keeping.
+ *
+ * Matching hostnames is not sufficient on its own. Two things make a stored
+ * certificate useless regardless of what it was issued for:
+ *
+ *  - It is about to expire, and a 397-day certificate certainly will. Without
+ *    this the phone simply stops connecting one day for no visible reason.
+ *  - It is valid for longer than Apple accepts. Certificates issued by earlier
+ *    builds of JARVIS ran for ten years, which iOS rejects outright — and
+ *    because they matched on hostname they would have been reused forever,
+ *    leaving the fix that shortened them with nothing to do.
+ */
+function stillUsable(certPath: string): boolean {
+  try {
+    const out = execFileSync(
+      '/usr/bin/openssl',
+      ['x509', '-in', certPath, '-noout', '-dates'],
+      { encoding: 'utf8' }
+    )
+    const from = Date.parse(out.match(/notBefore=(.+)/)?.[1] ?? '')
+    const until = Date.parse(out.match(/notAfter=(.+)/)?.[1] ?? '')
+    if (Number.isNaN(from) || Number.isNaN(until)) return false
+
+    const days = (until - from) / 86_400_000
+    if (days > 825) {
+      log('tls: stored certificate outlives what iOS accepts; reissuing')
+      return false
+    }
+    // Renew ahead of expiry rather than on the day it breaks.
+    if (until - Date.now() < 30 * 86_400_000) {
+      log('tls: stored certificate expires soon; reissuing')
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Returns the certificate, generating it if the set of addresses has changed.
  *
  * A laptop's LAN address changes between networks, and a certificate issued for
@@ -110,7 +150,8 @@ export function ensureCertificate(hosts: string[]): Certificate | null {
     reuse =
       existsSync(keyPath) &&
       existsSync(certPath) &&
-      JSON.stringify(JSON.parse(readFileSync(hostsPath, 'utf8'))) === JSON.stringify(wanted)
+      JSON.stringify(JSON.parse(readFileSync(hostsPath, 'utf8'))) === JSON.stringify(wanted) &&
+      stillUsable(certPath)
   } catch {
     reuse = false
   }
@@ -125,10 +166,15 @@ export function ensureCertificate(hosts: string[]): Certificate | null {
           'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
           '-keyout', keyPath,
           '-out', certPath,
-          // Long-lived on purpose: the certificate is trusted by hand on the
-          // phone, and asking the user to repeat that is how a feature stops
-          // being used.
-          '-days', '3650',
+          // 397 days, and not a day more.
+          //
+          // iOS and macOS reject any TLS server certificate whose validity
+          // exceeds 825 days — outright, with no "visit anyway" escape hatch.
+          // This was originally issued for ten years on the reasoning that
+          // re-trusting it annually would be a nuisance; the result was that
+          // Safari on the iPhone refused the connection and the site could not
+          // be opened at all. An annual prompt is the cost of the thing working.
+          '-days', '397',
           '-config', cfgPath
         ],
         { stdio: 'ignore' }

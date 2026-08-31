@@ -468,6 +468,7 @@ function PairPhone({ onClose }: { onClose: () => void }): JSX.Element {
     pairingExpiresAt: number | null
     fingerprint: string | null
     reachable: boolean
+    qr: string | null
     devices: { id: string; name: string; pairedAt: number }[]
     clients: number
   } | null>(null)
@@ -531,9 +532,16 @@ function PairPhone({ onClose }: { onClose: () => void }): JSX.Element {
             </ol>
 
             {state?.pairingCode && left > 0 ? (
-              <div className="pair-code">
-                <strong>{state.pairingCode}</strong>
-                <span>expires in {Math.ceil(left / 1000)}s</span>
+              <div className="pair-scan">
+                {state.qr && <img src={state.qr} alt="Scan to open JARVIS" />}
+                <div className="pair-code">
+                  <strong>{state.pairingCode}</strong>
+                  <span>expires in {Math.ceil(left / 1000)}s</span>
+                  <em>
+                    Point the iPhone camera at the code. It opens the address and fills
+                    in the digits.
+                  </em>
+                </div>
               </div>
             ) : (
               <button

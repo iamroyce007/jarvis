@@ -325,7 +325,12 @@ function MicIcon(): JSX.Element {
  * device the authority of the workstation.
  */
 function Pairing({ onPaired }: { onPaired: () => void }): JSX.Element {
-  const [code, setCode] = useState('')
+  // Arriving from a scanned code: the digits ride in the fragment, which the
+  // browser never sends to the server.
+  const [code, setCode] = useState(() => {
+    const m = /[#&]c=(\d{6})/.exec(window.location.hash)
+    return m ? m[1] : ''
+  })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
